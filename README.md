@@ -308,6 +308,9 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
   (the app password database).
 - Failed Basic-auth attempts are rate limited per IP and username
   (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW`).
+- CalDAV request bodies over `MAX_BODY_BYTES` (20 MB by default) are refused with 413.
+  Bodies are buffered in memory before being forwarded, so this bounds what one client can
+  make the process allocate. Raise it if your users attach large files to events.
 - Each user may hold `MAX_APP_PASSWORDS` active credentials (20 by default). The cap is
   there because verifying a Basic-auth attempt tries each of that user's hashes in turn,
   so an unbounded list would make every failed attempt proportionally more expensive.

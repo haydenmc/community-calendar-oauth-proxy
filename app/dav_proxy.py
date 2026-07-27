@@ -68,6 +68,24 @@ RESPONSE_STRIP = HOP_BY_HOP | {"content-encoding", "content-length"}
 UNAUTHORIZED_HEADERS = {"WWW-Authenticate": 'Basic realm="Shared Calendar", charset="UTF-8"'}
 
 
+async def read_limited_body(request: Request, limit: int) -> bytes | None:
+    """Buffer the request body, or return None if it exceeds ``limit`` bytes.
+
+    Trusting Content-Length alone would not do: it is absent on chunked
+    requests and a client is free to understate it, so the stream is measured
+    as it arrives and abandoned as soon as it runs over.
+    """
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 def filter_request_headers(headers, *, remote_user: str, script_name: str) -> dict[str, str]:
     """Build the header set sent to Radicale from the client's headers."""
     out = {k: v for k, v in headers.items() if k.lower() not in REQUEST_STRIP}
@@ -109,7 +127,10 @@ def create_dav_router(settings: Settings) -> APIRouter:
         limiter.reset(limit_key)
 
         backend: httpx.AsyncClient = request.app.state.backend
-        body = await request.body()
+        body = await read_limited_body(request, settings.max_body_bytes)
+        if body is None:
+            log.info("rejected oversized CalDAV body from %s (%s)", username, client_ip)
+            return Response(status_code=413, content=b"request body too large")
         headers = filter_request_headers(
             request.headers,
             remote_user=settings.shared_principal,

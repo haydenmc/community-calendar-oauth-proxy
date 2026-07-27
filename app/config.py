@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # user's active hashes in turn, so this also caps the argon2 work a failed
     # Basic-auth attempt against that username can cost.
     max_app_passwords: int = 20
+    # Largest request body the DAV proxy will accept, in bytes. Bodies are
+    # buffered in memory before being forwarded, so this bounds what a single
+    # authenticated client can make the process allocate. Calendar events are
+    # kilobytes; the default leaves room for large attachments.
+    max_body_bytes: int = 20 * 1024 * 1024
     display_timezone: str = "UTC"
 
     @property

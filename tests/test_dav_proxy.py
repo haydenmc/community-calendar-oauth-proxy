@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import httpx
+from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 
 from app.dav_proxy import filter_request_headers, filter_response_headers
+from app.main import create_app
 
 from .conftest import basic_auth
 
@@ -94,6 +96,31 @@ def test_repeated_failures_are_rate_limited(client):
     response = client.request("GET", "/dav/community/shared/", headers=basic_auth("alice", "wrong"))
     assert response.status_code == 429
     assert "Retry-After" in response.headers
+
+
+def test_oversized_body_is_rejected(settings, backend):
+    capped = settings.model_copy(update={"max_body_bytes": 1024})
+    app = create_app(capped, backend=backend.client, bootstrap=False)
+    with TestClient(app) as client:
+        secret = make_password(client)
+        response = client.request(
+            "PUT",
+            "/dav/community/shared/big.ics",
+            headers=basic_auth("alice", secret),
+            content=b"x" * 2048,
+        )
+        assert response.status_code == 413
+        assert backend.requests == []
+
+        # A body within the limit still goes through.
+        ok = client.request(
+            "PUT",
+            "/dav/community/shared/small.ics",
+            headers=basic_auth("alice", secret),
+            content=b"x" * 512,
+        )
+        assert ok.status_code == 207
+        assert backend.last.content == b"x" * 512
 
 
 def test_backend_failure_becomes_bad_gateway(client, backend):
