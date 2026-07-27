@@ -13,6 +13,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.caldav import PROPFIND_CTAG, parse_ctag
 from app.config import Settings
 from app.main import create_app
 
@@ -148,6 +149,37 @@ def test_time_range_filter_keeps_recurrences_and_drops_out_of_window_events(live
     assert "Ancient weekly standup" in page.text
     # Single occurrence in 2030: the server should never send it for March 2026.
     assert "Distant one-off" not in page.text
+
+
+def test_ctag_is_exposed_and_changes_with_the_collection(live_client):
+    """The viewer cache hangs off this: no ctag, or a static one, breaks it."""
+    settings = live_client.app.state.settings
+    secret = live_client.app.state.passwords.create("alice", "test")[1]
+    url = RADICALE_URL.rstrip("/") + settings.shared_path
+
+    def read_ctag() -> str | None:
+        with httpx.Client() as raw:
+            response = raw.request(
+                "PROPFIND",
+                url,
+                headers={"X-Remote-User": settings.shared_principal, "Depth": "0"},
+                content=PROPFIND_CTAG,
+            )
+        assert response.status_code == 207
+        return parse_ctag(response.content)
+
+    before = read_ctag()
+    assert before, "Radicale must report a ctag or the cache never engages"
+
+    uid = f"itest-{uuid.uuid4().hex[:8]}"
+    live_client.request(
+        "PUT",
+        f"/dav{settings.shared_path}{uid}.ics",
+        headers={**basic_auth("alice", secret), "Content-Type": "text/calendar"},
+        content=EVENT.format(uid=uid).encode(),
+    )
+
+    assert read_ctag() != before, "a write must invalidate the cache"
 
 
 def test_a_second_user_sees_the_same_shared_calendar(live_client):

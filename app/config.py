@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # month window keeps this small in practice; the cap is what stops a huge
     # collection from being pulled into memory whole.
     max_calendar_bytes: int = 20 * 1024 * 1024
+    # How many month windows to keep cached. Entries are only reused while the
+    # collection's ctag is unchanged, so this bounds memory, not staleness.
+    calendar_cache_windows: int = 24
     display_timezone: str = "UTC"
 
     @property

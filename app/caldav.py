@@ -21,6 +21,15 @@ BOOTSTRAP_DELAY_SECONDS = 2.0
 
 DAV_NS = "DAV:"
 CALDAV_NS = "urn:ietf:params:xml:ns:caldav"
+CALSERVER_NS = "http://calendarserver.org/ns/"
+
+# The collection's ctag changes whenever anything inside it does, so fetching it
+# is a cheap way to ask "is what I cached still current?".
+PROPFIND_CTAG = """<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:" xmlns:CS="http://calendarserver.org/ns/">
+  <D:prop><CS:getctag/></D:prop>
+</D:propfind>
+"""
 
 # The time-range filter is what keeps a page view proportional to the window on
 # screen rather than to the whole calendar. Per RFC 4791 the server matches a
@@ -180,6 +189,64 @@ def parse_calendar_data(xml_body: bytes) -> list[str]:
     ]
 
 
+def parse_ctag(xml_body: bytes) -> str | None:
+    try:
+        root = ElementTree.fromstring(xml_body)
+    except ElementTree.ParseError:
+        return None
+    for el in root.iter(f"{{{CALSERVER_NS}}}getctag"):
+        if el.text:
+            return el.text
+    return None
+
+
+async def fetch_ctag(client: httpx.AsyncClient, settings: Settings) -> str | None:
+    """The collection's change tag, or None if it cannot be determined."""
+    url = settings.radicale_url.rstrip("/") + settings.shared_path
+    try:
+        response = await client.request(
+            "PROPFIND", url, headers=_admin_headers(settings, Depth="0"), content=PROPFIND_CTAG
+        )
+    except httpx.HTTPError as exc:
+        log.warning("could not read the calendar ctag: %s", exc)
+        return None
+    if response.status_code != 207:
+        log.warning("ctag PROPFIND returned %s", response.status_code)
+        return None
+    return parse_ctag(response.content)
+
+
+class CalendarCache:
+    """Documents per window, valid only while the collection's ctag holds.
+
+    Lives on the event loop and is only touched between awaits, so it needs no
+    lock; two concurrent misses simply both fetch, which costs a duplicate
+    request and nothing else.
+    """
+
+    def __init__(self, max_windows: int = 24) -> None:
+        self._max_windows = max_windows
+        self._ctag: str | None = None
+        # Insertion-ordered, so the oldest window is the one evicted.
+        self._windows: dict[tuple[str, str], list[str]] = {}
+
+    def get(self, ctag: str | None, window: tuple[str, str]) -> list[str] | None:
+        if ctag is None or ctag != self._ctag:
+            return None
+        return self._windows.get(window)
+
+    def put(self, ctag: str | None, window: tuple[str, str], documents: list[str]) -> None:
+        if ctag is None:
+            return  # Without a ctag there is nothing to invalidate against.
+        if ctag != self._ctag:
+            self._ctag = ctag
+            self._windows.clear()
+        self._windows[window] = documents
+        while len(self._windows) > self._max_windows:
+            # Bounded so paging through months forever cannot grow it without end.
+            self._windows.pop(next(iter(self._windows)))
+
+
 async def _read_limited(response: httpx.Response, limit: int) -> bytes | None:
     """Buffer a response body, or return None once it runs past ``limit``."""
     body = bytearray()
@@ -195,28 +262,59 @@ async def fetch_calendar_documents(
     settings: Settings,
     start: datetime,
     end: datetime,
-) -> list[str]:
-    """Fetch the documents with VEVENTs overlapping ``start``..``end``."""
+) -> list[str] | None:
+    """Documents with VEVENTs overlapping ``start``..``end``.
+
+    Returns None if the fetch failed, which an empty list would not distinguish
+    from a genuinely empty calendar - and caching a failure would keep the
+    calendar looking empty until the collection next changed.
+    """
     url = settings.radicale_url.rstrip("/") + settings.shared_path
     query = CALENDAR_QUERY.format(start=format_caldav_time(start), end=format_caldav_time(end))
     # Streamed so an outsized collection is abandoned rather than buffered: any
     # authenticated user can PUT arbitrarily many events, and peak memory is a
     # multiple of the response once it is parsed into a DOM.
-    async with client.stream(
-        "REPORT", url, headers=_admin_headers(settings, Depth="1"), content=query
-    ) as response:
-        if response.status_code != 207:
-            await response.aread()
-            log.error(
-                "calendar-query REPORT failed: %s %s", response.status_code, response.text[:200]
-            )
-            return []
-        content = await _read_limited(response, settings.max_calendar_bytes)
+    try:
+        async with client.stream(
+            "REPORT", url, headers=_admin_headers(settings, Depth="1"), content=query
+        ) as response:
+            if response.status_code != 207:
+                await response.aread()
+                log.error(
+                    "calendar-query REPORT failed: %s %s", response.status_code, response.text[:200]
+                )
+                return None
+            content = await _read_limited(response, settings.max_calendar_bytes)
+    except httpx.HTTPError as exc:
+        log.error("calendar-query REPORT could not be sent: %s", exc)
+        return None
 
     if content is None:
         log.error(
             "calendar-query response exceeded %s bytes; showing an empty calendar",
             settings.max_calendar_bytes,
         )
-        return []
+        return None
     return parse_calendar_data(content)
+
+
+async def fetch_calendar_documents_cached(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    cache: CalendarCache,
+    start: datetime,
+    end: datetime,
+) -> list[str]:
+    """Fetch a window, reusing the cache while the collection is unchanged."""
+    window = (format_caldav_time(start), format_caldav_time(end))
+    ctag = await fetch_ctag(client, settings)
+
+    cached = cache.get(ctag, window)
+    if cached is not None:
+        return cached
+
+    documents = await fetch_calendar_documents(client, settings, start, end)
+    if documents is None:
+        return []
+    cache.put(ctag, window, documents)
+    return documents

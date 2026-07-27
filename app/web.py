@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import viewer
 from .auth import csrf_token, current_user, require_user, verify_csrf
-from .caldav import fetch_calendar_documents
+from .caldav import fetch_calendar_documents_cached
 from .config import Settings
 from .passwords import PasswordLimitReached
 
@@ -68,8 +68,12 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         window_start = datetime.combine(weeks[0][0], time.min, tzinfo=tz)
         window_end = datetime.combine(weeks[-1][-1] + timedelta(days=1), time.min, tzinfo=tz)
 
-        documents = await fetch_calendar_documents(
-            request.app.state.backend, settings, window_start, window_end
+        documents = await fetch_calendar_documents_cached(
+            request.app.state.backend,
+            settings,
+            request.app.state.calendar_cache,
+            window_start,
+            window_end,
         )
         events = viewer.expand_events(documents, window_start, window_end, tz)
 

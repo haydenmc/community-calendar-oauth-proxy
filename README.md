@@ -308,6 +308,10 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
   (the app password database).
 - Failed Basic-auth attempts are rate limited per IP and username
   (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW`).
+- The web viewer asks Radicale only for the month window on screen, and caches the result
+  against the collection's ctag — so repeat views cost one small request, and a write from
+  any CalDAV client invalidates it immediately. `CALENDAR_CACHE_WINDOWS` (24) bounds how
+  many months are held; the cache is per process and empty after a restart.
 - CalDAV request bodies over `MAX_BODY_BYTES` (20 MB by default) are refused with 413.
   Bodies are buffered in memory before being forwarded, so this bounds what one client can
   make the process allocate. Raise it if your users attach large files to events.
