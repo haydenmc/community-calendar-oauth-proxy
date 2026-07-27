@@ -1,0 +1,23 @@
+# Keep the build context small and the layer cache stable. Only requirements.txt
+# and app/ are actually copied into the image.
+.git
+.github
+.gitignore
+.venv
+venv
+.local
+.env
+*.db
+*.db-wal
+*.db-shm
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+data
+dev
+tests
+docker-compose.yml
+README.md
+pyproject.toml
+requirements-dev.txt

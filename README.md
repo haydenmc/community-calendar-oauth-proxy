@@ -137,6 +137,9 @@ TLS there.
 Re-run `docker compose up -d --build` after pulling changes — without `--build`, compose
 reuses the existing proxy image and your changes won't take effect.
 
+To run a published release instead of building locally, swap `build: .` for
+`image: ghcr.io/haydenmc/community-calendar-oauth-proxy:latest` (or pin a version tag).
+
 ### About the Radicale image
 
 `docker-compose.yml` pins `tomsquest/docker-radicale` by version. Tags are
@@ -223,6 +226,24 @@ sed 's|/data/collections|/tmp/radicale-test|; s|0.0.0.0:5232|127.0.0.1:5232|' \
 
 RADICALE_TEST_URL=http://127.0.0.1:5232 .venv/bin/python -m pytest
 ```
+
+### Container image
+
+The proxy image is Alpine-based and about 110 MB. Every dependency publishes musllinux
+wheels for amd64 and arm64, so it needs no compiler or Rust toolchain — the Dockerfile
+passes `--only-binary=:all:` so the build fails loudly if that ever changes rather than
+silently attempting a source build. It runs as an unprivileged user (uid 10001) and keeps
+its SQLite database in `/data`.
+
+### Continuous integration
+
+| Workflow | Trigger | Does |
+| --- | --- | --- |
+| `.github/workflows/ci.yml` | push to `main`, pull requests | Lint, run the tests (including the Radicale integration suite), and build the image |
+| `.github/workflows/release.yml` | tags matching `v*` | Build amd64 + arm64 and publish to `ghcr.io/haydenmc/community-calendar-oauth-proxy` |
+
+Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version plus
+`<major>.<minor>`, `<major>` and `latest`.
 
 ### Layout
 
