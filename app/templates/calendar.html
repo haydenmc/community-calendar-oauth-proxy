@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ month_title }} — Community Calendar{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="month-header">
+    <a class="button subtle" href="{{ prev_link }}" aria-label="Previous month">&larr;</a>
+    <h1>{{ month_title }}</h1>
+    <a class="button subtle" href="{{ next_link }}" aria-label="Next month">&rarr;</a>
+  </div>
+
+  <table class="month">
+    <thead>
+      <tr>{% for label in weekday_labels %}<th>{{ label }}</th>{% endfor %}</tr>
+    </thead>
+    <tbody>
+      {% for week in weeks %}
+      <tr>
+        {% for day in week %}
+        <td class="{% if day.month != month %}other-month{% endif %}{% if day == today %} today{% endif %}">
+          <span class="daynum">{{ day.day }}</span>
+          {% for event in events_by_date.get(day, []) %}
+          <span class="event{% if event.all_day %} all-day{% endif %}"
+                title="{{ event.summary }}{% if event.location %} — {{ event.location }}{% endif %}">
+            {% if not event.all_day %}<b>{{ event.time_label }}</b> {% endif %}{{ event.summary }}
+          </span>
+          {% endfor %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Upcoming</h2>
+  {% if upcoming %}
+  <ul class="agenda">
+    {% for event in upcoming %}
+    <li>
+      <span class="when">{{ event.start.strftime('%a %d %b') }} · {{ event.time_label }}</span>
+      <span class="what">
+        <b>{{ event.summary }}</b>
+        {% if event.location %}<span class="muted"> @ {{ event.location }}</span>{% endif %}
+        {% if event.description %}<div class="desc">{{ event.description }}</div>{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Nothing scheduled in this month's view.</p>
+  {% endif %}
+  <p class="muted small">Times shown in {{ settings.display_timezone }}. To add or edit events,
+  connect a CalDAV client from <a href="/passwords">CalDAV access</a>.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Community Calendar{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ '/calendar' if user else '/' }}">Community Calendar</a>
+    {% if user %}
+    <nav>
+      <a href="/calendar">Calendar</a>
+      <a href="/passwords">CalDAV access</a>
+      <span class="who">{{ user.display_name }}</span>
+      <a class="button subtle" href="/logout">Sign out</a>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

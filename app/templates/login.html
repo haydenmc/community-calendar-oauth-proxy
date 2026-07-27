@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card centered">
+  <h1>Community Calendar</h1>
+  <p class="muted">A shared calendar for the community, readable in your browser and
+  subscribable from any CalDAV client.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <p><a class="button primary" href="/login">Sign in with kanidm</a></p>
+</section>
+{% endblock %}
