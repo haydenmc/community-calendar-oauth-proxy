@@ -1,7 +1,8 @@
-"""kanidm OIDC login and session helpers.
+"""OpenID Connect login and session helpers.
 
-Any account that can complete the OIDC handshake with kanidm gets access to the
-shared calendar; there is deliberately no group gating.
+Works with any provider that publishes a discovery document. Any account that
+can complete the handshake gets access to the shared calendar; there is
+deliberately no group gating.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from .config import Settings
 
 log = logging.getLogger(__name__)
 
-PROVIDER = "kanidm"
+PROVIDER = "oidc"
 SESSION_USER_KEY = "user"
 SESSION_CSRF_KEY = "csrf"
 

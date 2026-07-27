@@ -40,8 +40,10 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         if current_user(request) is not None:
             return RedirectResponse("/calendar", status_code=303)
         errors = {
-            "login_failed": "Sign-in with kanidm did not complete. Please try again.",
-            "no_username": "kanidm did not return a username for your account.",
+            "login_failed": "Sign-in did not complete. Please try again.",
+            "no_username": (
+                f"{settings.oidc_provider_name} did not return a username for your account."
+            ),
         }
         return render(request, "login.html", error=errors.get(request.query_params.get("error", "")))
 

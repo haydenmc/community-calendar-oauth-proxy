@@ -13,15 +13,20 @@ class Settings(BaseSettings):
     # Public origin this app is served from, used to build CalDAV URLs shown to users.
     public_base_url: str = "http://localhost:8000"
 
-    # --- kanidm OIDC ---------------------------------------------------------
-    # Issuer URL, e.g. https://idm.example.org/oauth2/openid/calendar
+    # --- OpenID Connect ------------------------------------------------------
+    # Any provider publishing a discovery document works. The issuer is the URL
+    # that serves /.well-known/openid-configuration, e.g. for kanidm
+    # https://idm.example.org/oauth2/openid/calendar
     oidc_issuer: str = ""
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
     oidc_scopes: str = "openid profile email"
-    # Claim to use as the local username. kanidm puts the account name in
-    # `preferred_username` when the profile scope is granted.
+    # Claim to use as the local username. Most providers, kanidm included, put
+    # the account name in `preferred_username` when the profile scope is granted;
+    # set this to `email` or `sub` for providers that do not.
     oidc_username_claim: str = "preferred_username"
+    # Shown on the sign-in button, e.g. "kanidm", "Authentik", "our SSO".
+    oidc_provider_name: str = "SSO"
 
     # --- Radicale backend ----------------------------------------------------
     radicale_url: str = "http://radicale:5232"

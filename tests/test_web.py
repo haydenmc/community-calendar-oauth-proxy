@@ -28,7 +28,7 @@ END:VCALENDAR
 def test_anonymous_visitor_sees_sign_in(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "Sign in with kanidm" in response.text
+    assert "Sign in with SSO" in response.text
 
 
 def test_anonymous_calendar_redirects_to_landing(client):

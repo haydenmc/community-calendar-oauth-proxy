@@ -1,1 +1,1 @@
-"""calendar-proxy: kanidm-authenticated CalDAV proxy and web viewer."""
+"""calendar-proxy: OIDC-authenticated CalDAV proxy and web viewer."""
