@@ -14,10 +14,11 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import create_auth_router, create_oauth
-from .caldav import CalendarCache, ensure_collection_with_retry
+from .caldav import CalendarCache, CollectionIcsCache, ensure_collection_with_retry
 from .config import Settings, get_settings
 from .dav_proxy import create_dav_router
 from .db import Database
+from .feeds import FeedStore
 from .passwords import PasswordStore, RateLimiter
 from .viewer import ExpansionCache
 from .web import create_web_router
@@ -89,8 +90,18 @@ def create_app(
             last_used_throttle=settings.last_used_throttle,
             max_passwords=settings.max_app_passwords,
         )
+        app.state.feeds = FeedStore(
+            app.state.db,
+            last_used_throttle=settings.last_used_throttle,
+            max_feeds=settings.max_ics_feeds,
+        )
         app.state.auth_limiter = RateLimiter(settings.auth_rate_limit, settings.auth_rate_window)
+        # Its own limiter: the feed endpoint is unauthenticated and keyed by IP
+        # alone, so sharing state with Basic-auth failures would let either kind
+        # of probing lock out the other.
+        app.state.feed_limiter = RateLimiter(settings.auth_rate_limit, settings.auth_rate_window)
         app.state.calendar_cache = CalendarCache(max_windows=settings.calendar_cache_windows)
+        app.state.ics_cache = CollectionIcsCache()
         app.state.expansion_cache = ExpansionCache()
         if bootstrap:
             await ensure_collection_with_retry(app.state.backend, settings)

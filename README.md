@@ -7,6 +7,8 @@ identity provider.
 - **CalDAV** — works with Thunderbird, DAVx⁵, Apple Calendar, and anything else that speaks CalDAV.
 - **App passwords** — because CalDAV clients can't do an OAuth handshake, users generate
   HTTP Basic credentials in the web UI and paste those into their client.
+- **ICS feed links** — for Google Calendar, Outlook.com and other hosted services that can
+  only subscribe to a URL, users generate secret, revocable read-only feed links.
 
 Storage is handled by [Radicale](https://radicale.org/); this app is the authentication
 and presentation layer in front of it.
@@ -16,12 +18,14 @@ and presentation layer in front of it.
 ```
                           ┌────────────────────────────────────────┐
  Browser ── OIDC ───────► │  calendar-proxy (FastAPI)              │
- (viewer, app passwords)  │  • OIDC login against your IdP         │
+ (viewer, credentials)    │  • OIDC login against your IdP         │
                           │  • month view + upcoming agenda        │
-                          │  • app password CRUD (argon2, SQLite)  │ ──► Radicale
- CalDAV client ─ Basic ─► │  • /dav/* → verify Basic auth, forward │     (internal only)
- (Thunderbird, DAVx⁵…)    │    WebDAV with X-Remote-User           │
-                          └────────────────────────────────────────┘
+                          │  • app password CRUD (argon2, SQLite)  │
+ CalDAV client ─ Basic ─► │  • /dav/* → verify Basic auth, forward │ ──► Radicale
+ (Thunderbird, DAVx⁵…)    │    WebDAV with X-Remote-User           │     (internal only)
+                          │  • /feeds/<token>.ics → read-only ICS  │
+ Google / Outlook ──────► │    of the whole collection             │
+ (subscribe by URL)       └────────────────────────────────────────┘
 ```
 
 Storage is the stock [`tomsquest/docker-radicale`](https://github.com/tomsquest/docker-radicale)
@@ -114,7 +118,7 @@ docker compose up -d
 
 | Variable | Purpose |
 | --- | --- |
-| `PUBLIC_BASE_URL` | Public origin, used for the redirect URI and the CalDAV URL shown to users |
+| `PUBLIC_BASE_URL` | Public origin, used for the redirect URI and the CalDAV and feed URLs shown to users |
 | `SESSION_SECRET` | Signs the session cookie |
 | `COOKIE_SECURE` | Leave `true` in production; `false` only for plain-HTTP local testing |
 | `DISPLAY_TIMEZONE` | IANA zone the web viewer renders times in |
@@ -124,6 +128,8 @@ docker compose up -d
 | `SITE_TITLE` | Name in the header, browser tab and sign-in page |
 | `SITE_TAGLINE` | Blurb under the sign-in heading; empty to omit |
 | `SHARED_DISPLAY_NAME` | Calendar name CalDAV clients will show |
+| `MAX_APP_PASSWORDS` | Active app passwords per user (20) |
+| `MAX_ICS_FEEDS` | Active ICS feed links per user (20) |
 
 plus the OIDC settings above.
 
@@ -263,6 +269,30 @@ client needs:
 Secrets are stored as argon2 hashes and are never recoverable — revoke and regenerate if
 one is lost. Revocation takes effect immediately.
 
+### Subscribing from Google Calendar or Outlook.com
+
+Hosted calendars can neither sign in with OIDC nor speak CalDAV; all they accept is a URL
+they can fetch. Open **Feed links**, create one, and copy the URL it shows:
+
+```
+https://cal.example.org/feeds/<token>.ics
+```
+
+- **Google Calendar** — *Other calendars → + → From URL*
+- **Outlook.com** — *Add calendar → Subscribe from web*
+- **Apple Calendar** — *File → New Calendar Subscription*
+
+Some clients want a `webcal://` link; swap the scheme and leave the rest alone.
+
+The token is the entire credential — anyone holding the link can read the calendar without
+signing in — so the page presents it as a secret. Unlike app passwords the URL stays
+visible and re-copyable, because people paste it into a second service months later.
+Revoking is immediate.
+
+These feeds are read-only, and how often they refresh is entirely the subscribing service's
+decision: commonly a few hours, sometimes as much as a day. Nothing here can shorten that.
+Use CalDAV where changes need to show up promptly.
+
 The web viewer is read-only; create and edit events from a CalDAV client.
 
 ## Development
@@ -309,8 +339,9 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
 | `app/config.py` | Environment-driven settings |
 | `app/auth.py` | OIDC login, session and CSRF helpers |
 | `app/passwords.py` | App password store, Basic-auth parsing, rate limiting |
+| `app/feeds.py` | ICS feed link store and URL construction |
 | `app/dav_proxy.py` | The `/dav/*` CalDAV reverse proxy |
-| `app/caldav.py` | Server-side CalDAV client (bootstrap + viewer fetches) |
+| `app/caldav.py` | Server-side CalDAV client (bootstrap, viewer fetches, feed bodies) |
 | `app/viewer.py` | Recurrence expansion and month-grid construction |
 | `app/web.py` | Web routes and templates glue |
 | `dev/` | Mock identity provider, local Radicale config and run script (never deployed) |
@@ -318,7 +349,8 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
 ## Operational notes
 
 - **Back up** two bind-mounted directories, both alongside `docker-compose.yml`:
-  `./radicale-data` (the calendar itself) and `./proxy-data` (the app password database).
+  `./radicale-data` (the calendar itself) and `./proxy-data` (the credential database:
+  app passwords and ICS feed links).
   They are ordinary directories on the host, so any file-level backup covers them — there
   is no `docker volume` to export. Stop the stack first, or accept that SQLite's WAL means
   a live copy may need recovery on restore.
@@ -342,6 +374,18 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
   so an unbounded list would make every failed attempt proportionally more expensive.
 - Successful verifications are cached for `AUTH_CACHE_TTL` seconds so argon2 isn't re-run
   on every poll; a revocation clears the cache immediately.
+- Each user may hold `MAX_ICS_FEEDS` active feed links (20 by default).
+- **ICS feed tokens travel in the URL path**, so they land in access logs — your reverse
+  proxy's, and uvicorn's if you enable them. Anyone who can read those logs can read the
+  calendar. Either keep the logs as protected as the calendar, or drop the path for
+  `/feeds/` requests. The tokens are 192 bits from a CSPRNG and the app itself only ever
+  logs a feed's numeric id.
+- Feed responses carry an `ETag` derived from the collection's ctag, and a conditional
+  request gets a 304 without the calendar being fetched at all. This matters because some
+  subscribers poll far more often than the calendar changes. Bodies are cached in-process
+  against the same ctag, so a write from any client is reflected on the next fetch.
+- Unknown feed tokens are rate limited per IP (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW`), and
+  a revoked token is answered identically to one that never existed.
 - `GET /healthz` reports whether Radicale is reachable.
 
 ## Possible extensions

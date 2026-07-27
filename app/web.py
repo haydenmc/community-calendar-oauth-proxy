@@ -12,14 +12,33 @@ from fastapi.templating import Jinja2Templates
 
 from . import viewer
 from .auth import csrf_token, current_user, require_user, verify_csrf
-from .caldav import fetch_ctag, fetch_window
+from .caldav import fetch_collection_ics, fetch_ctag, fetch_window
 from .config import Settings
+from .feeds import FeedLimitReached, feed_url
 from .passwords import PasswordLimitReached
 
 log = logging.getLogger(__name__)
 
 FLASH_SECRET_KEY = "new_secret"
 FLASH_ERROR_KEY = "password_error"
+FLASH_FEED_ERROR_KEY = "feed_error"
+
+# Long enough that a subscriber refetching immediately is served from cache, far
+# short of how long a calendar edit may wait to appear. Private so nothing in
+# between keeps a copy of a body the token is supposed to gate.
+FEED_CACHE_CONTROL = "private, max-age=300"
+
+
+def _matches_etag(header: str | None, etag: str) -> bool:
+    """Whether an If-None-Match header covers ``etag`` (RFC 9110 13.1.2)."""
+    if not header:
+        return False
+    candidates = [value.strip() for value in header.split(",")]
+    if "*" in candidates:
+        return True
+    # A cache that stored the body after a compressing proxy touched it may send
+    # the tag back weakened, and it is still the same collection state.
+    return any(value.removeprefix("W/") == etag for value in candidates)
 
 
 def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRouter:
@@ -190,6 +209,111 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         if store.revoke(user.username, password_id):
             log.info("revoked app password %s for %s", password_id, user.username)
         return RedirectResponse("/passwords", status_code=303)
+
+    @router.get("/feeds", include_in_schema=False)
+    async def feeds_page(request: Request):
+        if current_user(request) is None:
+            return RedirectResponse("/", status_code=303)
+        user = require_user(request)
+        store = request.app.state.feeds
+        feeds = store.list_for_user(user.username)
+        return render(
+            request,
+            "feeds.html",
+            feeds=[(feed, feed_url(settings, feed)) for feed in feeds],
+            error=request.session.pop(FLASH_FEED_ERROR_KEY, None),
+            at_limit=len(feeds) >= store.max_feeds,
+            max_feeds=store.max_feeds,
+        )
+
+    @router.post("/feeds", include_in_schema=False)
+    async def create_feed(
+        request: Request,
+        label: str = Form(default=""),
+        csrf: str = Form(default=""),
+    ):
+        user = require_user(request)
+        verify_csrf(request, csrf)
+        store = request.app.state.feeds
+        try:
+            feed = store.create(user.username, label or "Calendar feed")
+        except FeedLimitReached as exc:
+            request.session[FLASH_FEED_ERROR_KEY] = (
+                f"You already have {exc.limit} feed links, the maximum. "
+                "Revoke one you no longer use before creating another."
+            )
+            log.info("ics feed limit reached for %s", user.username)
+            return RedirectResponse("/feeds", status_code=303)
+        # id only, never the token: it is the credential, and this lands in logs.
+        log.info("created ics feed %s for %s", feed.id, user.username)
+        return RedirectResponse("/feeds", status_code=303)
+
+    @router.post("/feeds/{feed_id}/revoke", include_in_schema=False)
+    async def revoke_feed(request: Request, feed_id: int, csrf: str = Form(default="")):
+        user = require_user(request)
+        verify_csrf(request, csrf)
+        if request.app.state.feeds.revoke(user.username, feed_id):
+            log.info("revoked ics feed %s for %s", feed_id, user.username)
+        return RedirectResponse("/feeds", status_code=303)
+
+    @router.get("/feeds/{token}.ics", include_in_schema=False)
+    async def ics_feed(request: Request, token: str) -> Response:
+        """Serve the shared calendar to whoever holds the token in the URL.
+
+        No session and no Basic auth: hosted services like Google Calendar and
+        Outlook.com fetch this anonymously, so the token is the whole credential.
+        """
+        store = request.app.state.feeds
+        limiter = request.app.state.feed_limiter
+        client_ip = request.client.host if request.client else "-"
+        if limiter.is_blocked(client_ip):
+            log.warning("rate limited ics feed attempts from %s", client_ip)
+            return Response(status_code=429, headers={"Retry-After": str(settings.auth_rate_window)})
+
+        feed = store.lookup(token)
+        if feed is None:
+            # Identical for an unknown token and a revoked one: the difference
+            # would confirm that a token had once been valid.
+            limiter.record_failure(client_ip)
+            log.info("unknown ics feed token from %s", client_ip)
+            return Response(status_code=404, content=b"not found")
+        limiter.reset(client_ip)
+
+        backend = request.app.state.backend
+        ctag = await fetch_ctag(backend, settings)
+        headers = {
+            "Cache-Control": FEED_CACHE_CONTROL,
+            # The token sits in the path, so keep it out of anywhere this body
+            # might link onward from, and out of search indexes.
+            "Referrer-Policy": "no-referrer",
+            "X-Robots-Tag": "noindex",
+        }
+        etag = f'"{ctag}"' if ctag else None
+        if etag:
+            headers["ETag"] = etag
+            if _matches_etag(request.headers.get("if-none-match"), etag):
+                # The common case by far: subscribers poll far more often than
+                # the calendar changes, and this answers without a body.
+                store.touch(feed.id)
+                return Response(status_code=304, headers=headers)
+
+        cache = request.app.state.ics_cache
+        body = cache.get(ctag)
+        if body is None:
+            body = await fetch_collection_ics(backend, settings)
+            if body is None:
+                # 503, not 502: subscribers should treat this as retry-later and
+                # keep the events they already have.
+                return Response(status_code=503, content=b"calendar backend unavailable")
+            cache.put(ctag, body)
+
+        store.touch(feed.id)
+        headers["Content-Disposition"] = 'inline; filename="calendar.ics"'
+        return Response(
+            content=body,
+            media_type="text/calendar; charset=utf-8",
+            headers=headers,
+        )
 
     @router.get("/.well-known/caldav", include_in_schema=False)
     async def well_known_caldav():

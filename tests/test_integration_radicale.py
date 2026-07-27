@@ -182,6 +182,37 @@ def test_ctag_is_exposed_and_changes_with_the_collection(live_client):
     assert read_ctag() != before, "a write must invalidate the cache"
 
 
+def test_ics_feed_serves_the_whole_collection(live_client):
+    """The feed is a plain GET of the collection; Radicale must answer with one
+    VCALENDAR containing every event, RRULEs unexpanded."""
+    settings = live_client.app.state.settings
+    secret = live_client.app.state.passwords.create("alice", "test")[1]
+    uid = f"itest-{uuid.uuid4().hex[:8]}"
+    live_client.request(
+        "PUT",
+        f"/dav{settings.shared_path}{uid}.ics",
+        headers={**basic_auth("alice", secret), "Content-Type": "text/calendar"},
+        content=EVENT.format(uid=uid).encode(),
+    )
+
+    login(live_client)
+    live_client.post("/feeds", data={"label": "Google", "csrf": "test-csrf"})
+    feed = live_client.app.state.feeds.list_for_user("alice")[0]
+    live_client.cookies.clear()
+
+    response = live_client.get(f"/feeds/{feed.token}.ics")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/calendar")
+    assert response.text.startswith("BEGIN:VCALENDAR")
+    assert "Integration game night" in response.text
+    # The subscriber expands recurrences itself, so the rule must survive.
+    assert "RRULE:FREQ=WEEKLY;COUNT=3" in response.text
+
+    etag = response.headers["ETag"]
+    unchanged = live_client.get(f"/feeds/{feed.token}.ics", headers={"If-None-Match": etag})
+    assert unchanged.status_code == 304
+
+
 def test_a_second_user_sees_the_same_shared_calendar(live_client):
     settings = live_client.app.state.settings
     alice_secret = live_client.app.state.passwords.create("alice", "test")[1]
