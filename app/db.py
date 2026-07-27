@@ -1,4 +1,4 @@
-"""Tiny SQLite layer. One table, no ORM, no migration framework."""
+"""Tiny SQLite layer. No ORM, no migration framework."""
 
 from __future__ import annotations
 
@@ -20,6 +20,18 @@ CREATE TABLE IF NOT EXISTS app_passwords (
 );
 CREATE INDEX IF NOT EXISTS idx_app_passwords_username
     ON app_passwords (username, revoked_at);
+
+CREATE TABLE IF NOT EXISTS ics_feeds (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    username     TEXT NOT NULL,
+    label        TEXT NOT NULL DEFAULT '',
+    token        TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ics_feeds_username
+    ON ics_feeds (username, revoked_at);
 """
 
 

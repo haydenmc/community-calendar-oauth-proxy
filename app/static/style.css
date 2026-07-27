@@ -150,6 +150,25 @@ dl.settings-list { display: grid; grid-template-columns: minmax(6rem, max-conten
 dl.settings-list dt { color: var(--muted); }
 dl.settings-list dd { margin: 0; overflow-wrap: anywhere; }
 
+.feed { padding: .8rem 0; border-top: 1px solid var(--line); }
+.feed:first-of-type { border-top: none; padding-top: 0; }
+.feed-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.feed p { margin: .4rem 0 0; }
+.feed-url { display: flex; gap: .5rem; margin-top: .5rem; }
+.feed-url input {
+  /* The URL is longer than the box, so it scrolls rather than wrapping the
+     token across lines where a partial copy would look like a whole one. */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: .45rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+}
+
 table.listing { width: 100%; border-collapse: collapse; }
 table.listing th { text-align: left; font-size: .8rem; color: var(--muted); padding: .4rem 0; }
 table.listing td { padding: .5rem 0; border-top: 1px solid var(--line); }

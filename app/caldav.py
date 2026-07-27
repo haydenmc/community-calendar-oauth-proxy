@@ -304,6 +304,58 @@ async def fetch_calendar_documents(
     return parse_calendar_data(content)
 
 
+class CollectionIcsCache:
+    """The whole collection as one iCalendar body, valid while the ctag holds.
+
+    One entry, not a window map like CalendarCache: there is only ever the one
+    body to hold. Same event-loop-only reasoning applies, so no lock.
+    """
+
+    def __init__(self) -> None:
+        self._ctag: str | None = None
+        self._body: bytes | None = None
+
+    def get(self, ctag: str | None) -> bytes | None:
+        if ctag is None or ctag != self._ctag:
+            return None
+        return self._body
+
+    def put(self, ctag: str | None, body: bytes) -> None:
+        if ctag is None:
+            return  # Without a ctag there is nothing to invalidate against.
+        self._ctag = ctag
+        self._body = body
+
+
+async def fetch_collection_ics(client: httpx.AsyncClient, settings: Settings) -> bytes | None:
+    """The shared collection as a single iCalendar document, or None on failure.
+
+    Radicale serves a GET of the collection itself as one VCALENDAR with every
+    component in it, RRULEs untouched, which is exactly what an ICS subscriber
+    wants: the client does its own recurrence expansion.
+    """
+    url = settings.radicale_url.rstrip("/") + settings.shared_path
+    # Streamed and capped for the same reason as the calendar-query above: any
+    # authenticated user can PUT arbitrarily many events into this collection.
+    try:
+        async with client.stream(
+            "GET", url, headers={"X-Remote-User": settings.shared_principal}
+        ) as response:
+            if response.status_code != 200:
+                await response.aread()
+                log.error("collection GET failed: %s %s", response.status_code, response.text[:200])
+                return None
+            content = await _read_limited(response, settings.max_calendar_bytes)
+    except httpx.HTTPError as exc:
+        log.error("collection GET could not be sent: %s", exc)
+        return None
+
+    if content is None:
+        log.error("collection exceeded %s bytes; not serving a feed", settings.max_calendar_bytes)
+        return None
+    return content
+
+
 async def fetch_window(
     client: httpx.AsyncClient,
     settings: Settings,

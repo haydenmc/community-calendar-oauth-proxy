@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # user's active hashes in turn, so this also caps the argon2 work a failed
     # Basic-auth attempt against that username can cost.
     max_app_passwords: int = 20
+    # Active ICS feed links one user may hold. Its own knob rather than sharing
+    # the app-password cap: a feed link is read-only and costs a single indexed
+    # lookup to check, so it need not be rationed for the same reasons.
+    max_ics_feeds: int = 20
     # Largest request body the DAV proxy will accept, in bytes. Bodies are
     # buffered in memory before being forwarded, so this bounds what a single
     # authenticated client can make the process allocate. Calendar events are

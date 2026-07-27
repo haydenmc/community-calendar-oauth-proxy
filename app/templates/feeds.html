@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Feed links — {{ settings.site_title }}{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>Calendar feed links</h1>
+  <p class="muted">Google Calendar, Outlook.com and other hosted calendars can't sign in with
+  {{ settings.oidc_provider_name }}. Create a feed link here and give it to them instead: they'll
+  fetch the calendar from that URL on their own schedule.</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  {% if at_limit %}
+  <p class="muted">You have the maximum of {{ max_feeds }} feed links. Revoke one below to create
+  another.</p>
+  {% else %}
+  <form method="post" action="/feeds" class="inline-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="text" name="label" maxlength="64" placeholder="Label (e.g. Google Calendar, Work Outlook)">
+    <button class="button primary" type="submit">Create feed link</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Your feed links</h2>
+  {% if feeds %}
+  {% for feed, url in feeds %}
+  <div class="feed">
+    <div class="feed-head">
+      <strong>{{ feed.label }}</strong>
+      <form method="post" action="/feeds/{{ feed.id }}/revoke">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button class="button danger" type="submit">Revoke</button>
+      </form>
+    </div>
+    <div class="feed-url">
+      <input type="text" readonly value="{{ url }}" aria-label="Feed URL for {{ feed.label }}"
+             onfocus="this.select()">
+      <button class="button" type="button" data-copy="{{ url }}">Copy</button>
+    </div>
+    <p class="muted small">Created {{ feed.created_at[:10] }} ·
+    last fetched {{ feed.last_used_at[:16].replace('T', ' ') if feed.last_used_at else 'never' }}</p>
+  </div>
+  {% endfor %}
+  <p class="muted small">Anyone who has one of these URLs can read the calendar without signing in,
+  so treat them like passwords. Revoking one stops it working immediately.</p>
+  {% else %}
+  <p class="muted">You have no feed links yet.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Adding the feed</h2>
+  <p class="muted small"><strong>Google Calendar:</strong> <em>Other calendars → + → From URL</em>,
+  paste the link. <strong>Outlook.com:</strong> <em>Add calendar → Subscribe from web</em>, paste the
+  link. <strong>Apple Calendar:</strong> <em>File → New Calendar Subscription</em>. Some apps prefer
+  a <code>webcal://</code> link — take the URL above and swap <code>https://</code> for
+  <code>webcal://</code>.</p>
+  <p class="muted small">These services decide for themselves how often to refresh, commonly every
+  few hours and sometimes as much as a day; that delay is theirs and nothing here can shorten it.
+  For changes you want to see straight away, use <a href="/passwords">CalDAV access</a> instead —
+  a feed link is read-only in any case.</p>
+</section>
+
+<script>
+  document.querySelectorAll('button[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      navigator.clipboard.writeText(button.dataset.copy).then(function () {
+        var previous = button.textContent;
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = previous; }, 1500);
+      });
+    });
+  });
+</script>
+{% endblock %}
