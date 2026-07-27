@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, time, timedelta
 
+import anyio
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -116,7 +117,11 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         verify_csrf(request, csrf)
         store = request.app.state.passwords
         try:
-            _, secret = store.create(user.username, label or "CalDAV client")
+            # argon2 is deliberately slow; hashing on the event loop would stall
+            # every other request for the duration, DAV traffic included.
+            _, secret = await anyio.to_thread.run_sync(
+                store.create, user.username, label or "CalDAV client"
+            )
         except PasswordLimitReached as exc:
             request.session[FLASH_ERROR_KEY] = (
                 f"You already have {exc.limit} app passwords, the maximum. "
