@@ -196,7 +196,17 @@ instead of `edge`, updating `FORWARDED_ALLOW_IPS` to that network's subnet:
       - traefik.enable=true
       - traefik.http.routers.calendar.rule=Host(`cal.example.org`)
       - traefik.http.services.calendar.loadbalancer.server.port=8000
+      # Required: this service is on more than one network.
+      - traefik.docker.network=proxy
 ```
+
+**Do not omit `traefik.docker.network`.** This service is attached to
+`internal` as well as the shared network, and when a container has several
+addresses Traefik picks one itself. If it picks the `internal` one — a network
+declared `internal: true`, which Traefik is not attached to — the connection
+never completes. That surfaces as a 504 Gateway Timeout with *nothing* in the
+app's logs, because the request never arrives, while the container's own health
+check keeps passing from inside. Name the network Traefik shares with the app.
 
 Traefik discards client-supplied `X-Forwarded-*` headers by default; keep it
 that way by not setting `forwardedHeaders.trustedIPs` on the entrypoint unless
