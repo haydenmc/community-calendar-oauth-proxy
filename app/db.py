@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -30,6 +31,7 @@ class Database:
             os.makedirs(parent, exist_ok=True)
         # A single shared connection keeps :memory: databases usable in tests and
         # is plenty for a community-sized deployment. SQLite serialises writes.
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -39,15 +41,28 @@ class Database:
 
     @contextmanager
     def cursor(self) -> Iterator[sqlite3.Cursor]:
-        cur = self._conn.cursor()
-        try:
-            yield cur
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
-        finally:
-            cur.close()
+        """Run a transaction. Serialised: the connection carries only one.
+
+        The event loop and the worker threads that verify app passwords share
+        this connection, and a connection has a single implicit transaction. Two
+        callers interleaving inside it means one's ``commit()`` lands the other's
+        half-finished statements, and one's ``rollback()`` discards them. The
+        lock keeps each block alone in its transaction.
+
+        It is not reentrant, deliberately: nesting ``cursor()`` blocks would
+        deadlock rather than quietly commit an outer caller's partial work. Keep
+        the body short and do slow work (argon2) outside it.
+        """
+        with self._lock:
+            cur = self._conn.cursor()
+            try:
+                yield cur
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+            finally:
+                cur.close()
 
     def close(self) -> None:
         self._conn.close()

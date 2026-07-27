@@ -96,6 +96,9 @@ class PasswordStore:
         cannot both slip past it.
         """
         secret = generate_secret()
+        # Hash before opening the transaction: cursor() is serialised across the
+        # whole process, and argon2 is far too slow to hold that lock through.
+        secret_hash = _hasher.hash(secret)
         with self._db.cursor() as cur:
             cur.execute(
                 "SELECT COUNT(*) AS active FROM app_passwords"
@@ -107,7 +110,7 @@ class PasswordStore:
             cur.execute(
                 "INSERT INTO app_passwords (username, label, secret_hash, created_at)"
                 " VALUES (?, ?, ?, ?)",
-                (username, label.strip()[:64], _hasher.hash(secret), _now()),
+                (username, label.strip()[:64], secret_hash, _now()),
             )
             new_id = cur.lastrowid
         return self.get(username, new_id), secret  # type: ignore[return-value]
