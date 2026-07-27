@@ -50,6 +50,11 @@ class Event:
         adjusted = self.end - timedelta(microseconds=1)
         return max(self.start.date(), adjusted.date())
 
+    @property
+    def day_span(self) -> int:
+        """Calendar days the event occupies, inclusive of both ends."""
+        return (self.end_date - self.start_date).days + 1
+
     def dates(self):
         current = self.start_date
         while current <= self.end_date:
@@ -149,3 +154,73 @@ def shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
 
 def upcoming(events: list[Event], now: datetime, limit: int = 10) -> list[Event]:
     return [e for e in events if e.end >= now][:limit]
+
+
+@dataclass(frozen=True)
+class Countdown:
+    event: Event
+    days_away: int
+
+    @property
+    def label(self) -> str:
+        return "tomorrow" if self.days_away == 1 else f"in {self.days_away} days"
+
+
+def countdowns(
+    events: list[Event],
+    today: date,
+    visible_through: date,
+    *,
+    min_span: int = 3,
+    limit: int = 5,
+) -> list[Countdown]:
+    """Countdowns for big events starting after the last day of the rendered grid.
+
+    ``visible_through`` is that last grid day, so an event already drawn on
+    screen loses its countdown - the grid is the better signal once it is
+    there. It is never earlier than today, so this also drops events that are
+    already under way.
+
+    ``events`` is expected sorted by start, as expand_events leaves it, so the
+    occurrence kept for a recurring series is the nearest one.
+    """
+    seen: set[str] = set()
+    found: list[Countdown] = []
+    for event in events:
+        if event.day_span < min_span or event.start_date <= visible_through:
+            continue
+        # An empty UID is the fallback in _component_to_event, not an identity;
+        # deduplicating on it would collapse unrelated events into one.
+        if event.uid:
+            if event.uid in seen:
+                continue
+            seen.add(event.uid)
+        found.append(Countdown(event=event, days_away=(event.start_date - today).days))
+        if len(found) == limit:
+            break
+    return found
+
+
+class ExpansionCache:
+    """One expanded window, valid only while the collection's ctag holds.
+
+    Fetching a year of documents is cheap, but expanding a year of recurrences
+    runs on the event loop on every load of the busiest page. The ctag moves on
+    any write and the window key moves at the month boundary, so this needs no
+    invalidation of its own.
+    """
+
+    def __init__(self) -> None:
+        self._key: tuple[str, str, str] | None = None
+        self._events: list[Event] = []
+
+    def get(self, key: tuple[str, str, str] | None) -> list[Event] | None:
+        if key is None or key != self._key:
+            return None
+        return self._events
+
+    def put(self, key: tuple[str, str, str] | None, events: list[Event]) -> None:
+        if key is None:
+            return  # Without a ctag there is nothing to invalidate against.
+        self._key = key
+        self._events = events

@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # How many month windows to keep cached. Entries are only reused while the
     # collection's ctag is unchanged, so this bounds memory, not staleness.
     calendar_cache_windows: int = 24
+    # How far ahead the countdown panel looks, in days. 0 disables the panel
+    # and the second calendar-query it costs.
+    countdown_days: int = 365
+    # Calendar days an event must span (inclusive) to earn a countdown, so an
+    # overnight does not crowd out a week-long trip.
+    countdown_min_span: int = 3
+    # Most countdowns shown at once.
+    countdown_limit: int = 5
     display_timezone: str = "UTC"
 
     @property

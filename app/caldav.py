@@ -227,13 +227,19 @@ class CalendarCache:
     def __init__(self, max_windows: int = 24) -> None:
         self._max_windows = max_windows
         self._ctag: str | None = None
-        # Insertion-ordered, so the oldest window is the one evicted.
+        # Insertion-ordered, so the least recently used window is evicted.
         self._windows: dict[tuple[str, str], list[str]] = {}
 
     def get(self, ctag: str | None, window: tuple[str, str]) -> list[str] | None:
         if ctag is None or ctag != self._ctag:
             return None
-        return self._windows.get(window)
+        documents = self._windows.get(window)
+        if documents is not None:
+            # Move to the back: eviction is oldest-first, and the countdown
+            # horizon is written once but read on every current-month view, so
+            # it must not be discarded just for having been written first.
+            self._windows[window] = self._windows.pop(window)
+        return documents
 
     def put(self, ctag: str | None, window: tuple[str, str], documents: list[str]) -> None:
         if ctag is None:
@@ -298,16 +304,20 @@ async def fetch_calendar_documents(
     return parse_calendar_data(content)
 
 
-async def fetch_calendar_documents_cached(
+async def fetch_window(
     client: httpx.AsyncClient,
     settings: Settings,
     cache: CalendarCache,
+    ctag: str | None,
     start: datetime,
     end: datetime,
 ) -> list[str]:
-    """Fetch a window, reusing the cache while the collection is unchanged."""
+    """Fetch one window against an already-resolved ctag.
+
+    Split out from fetch_calendar_documents_cached so a page rendering several
+    windows pays for only one ctag round-trip.
+    """
     window = (format_caldav_time(start), format_caldav_time(end))
-    ctag = await fetch_ctag(client, settings)
 
     cached = cache.get(ctag, window)
     if cached is not None:
@@ -318,3 +328,15 @@ async def fetch_calendar_documents_cached(
         return []
     cache.put(ctag, window, documents)
     return documents
+
+
+async def fetch_calendar_documents_cached(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    cache: CalendarCache,
+    start: datetime,
+    end: datetime,
+) -> list[str]:
+    """Fetch a window, reusing the cache while the collection is unchanged."""
+    ctag = await fetch_ctag(client, settings)
+    return await fetch_window(client, settings, cache, ctag, start, end)

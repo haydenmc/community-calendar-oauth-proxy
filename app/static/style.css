@@ -122,6 +122,9 @@ ul.agenda li:last-child { border-bottom: none; }
 .when { flex: 0 0 11rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .desc { color: var(--muted); font-size: .88rem; white-space: pre-wrap; }
 
+.countdown .when { flex: 0 0 5.5rem; }
+.countdown .when b { display: block; font-size: 1.6rem; line-height: 1.1; color: var(--accent); }
+
 .inline-form { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem; }
 .inline-form input[type=text] {
   flex: 1 1 16rem;
@@ -157,4 +160,6 @@ table.listing td:last-child { text-align: right; }
   .event { font-size: .68rem; }
   ul.agenda li { flex-direction: column; gap: .15rem; }
   .when { flex: none; }
+  .countdown .when { flex: none; }
+  .countdown .when b { display: inline; font-size: 1.3rem; }
 }

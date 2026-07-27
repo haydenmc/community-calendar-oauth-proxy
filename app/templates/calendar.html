@@ -53,4 +53,23 @@
   <p class="muted small">Times shown in {{ settings.display_timezone }}. To add or edit events,
   connect a CalDAV client from <a href="/passwords">CalDAV access</a>.</p>
 </section>
+
+{% if countdowns %}
+<section class="card countdown">
+  <h2>Counting down</h2>
+  <ul class="agenda">
+    {% for c in countdowns %}
+    <li>
+      <span class="when"><b>{{ c.days_away }}</b> days</span>
+      <span class="what">
+        <b>{{ c.event.summary }}</b>
+        {% if c.event.location %}<span class="muted"> @ {{ c.event.location }}</span>{% endif %}
+        <div class="desc">{{ c.event.start.strftime('%a %d %b') }} – {{ c.event.end_date.strftime('%a %d %b') }}
+          · {{ c.event.day_span }} days · starts {{ c.label }}</div>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% endblock %}

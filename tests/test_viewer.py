@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.caldav import parse_calendar_data
-from app.viewer import expand_events, group_by_date, month_weeks, shift_month, upcoming
+from app.viewer import (
+    countdowns,
+    expand_events,
+    group_by_date,
+    month_weeks,
+    shift_month,
+    upcoming,
+)
 
 UTC = ZoneInfo("UTC")
 
@@ -107,6 +114,152 @@ def test_upcoming_drops_finished_events():
     events = expand_events([WEEKLY_GAME_NIGHT], start, end, UTC)
     later = upcoming(events, datetime(2026, 3, 15, tzinfo=UTC))
     assert [e.start.date() for e in later] == [date(2026, 3, 16), date(2026, 3, 23)]
+
+
+# -- countdowns ---------------------------------------------------------------
+
+MONTHLY_RETREAT = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VEVENT
+UID:retreat
+DTSTART;VALUE=DATE:20260601
+DTEND;VALUE=DATE:20260608
+RRULE:FREQ=MONTHLY
+SUMMARY:Retreat
+END:VEVENT
+END:VCALENDAR
+"""
+
+BIG_TRIP = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//test//EN
+BEGIN:VEVENT
+UID:big-trip
+DTSTART;VALUE=DATE:20270214
+DTEND;VALUE=DATE:20270221
+SUMMARY:Big trip
+LOCATION:Somewhere far
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+def year_from(day: date):
+    return datetime.combine(day, time.min, tzinfo=UTC), datetime.combine(
+        day + timedelta(days=365), time.min, tzinfo=UTC
+    )
+
+
+def test_day_span_counts_inclusive_days():
+    start, end = march_2026_window()
+    (lan,) = expand_events([ALL_DAY_LAN], start, end, UTC)
+    # DTEND is exclusive, so 14th to 16th is two days occupied, not three.
+    assert lan.day_span == 2
+
+    (night,) = expand_events([WEEKLY_GAME_NIGHT.replace("COUNT=4", "COUNT=1")], start, end, UTC)
+    assert night.day_span == 1
+
+
+def test_countdowns_pick_out_big_future_events():
+    today = date(2026, 8, 1)
+    start, end = year_from(today)
+    events = expand_events([BIG_TRIP, ALL_DAY_LAN, WEEKLY_GAME_NIGHT], start, end, UTC)
+
+    (item,) = countdowns(events, today, today, min_span=3)
+    assert item.event.summary == "Big trip"
+    assert item.days_away == (date(2027, 2, 14) - today).days
+    assert item.event.day_span == 7
+
+
+def test_countdowns_ignore_events_too_short_to_matter():
+    today = date(2026, 8, 1)
+    start, end = year_from(today)
+    events = expand_events([BIG_TRIP], start, end, UTC)
+
+    assert countdowns(events, today, today, min_span=7) != []
+    assert countdowns(events, today, today, min_span=8) == []
+
+
+def test_countdowns_drop_events_already_on_the_grid():
+    today = date(2027, 2, 1)
+    start, end = year_from(today)
+    events = expand_events([BIG_TRIP], start, end, UTC)
+
+    assert countdowns(events, today, today, min_span=3) != []
+    # Once the grid runs past the event's start it is on screen already.
+    assert countdowns(events, today, date(2027, 2, 28), min_span=3) == []
+
+
+def test_countdowns_drop_events_already_under_way():
+    today = date(2027, 2, 16)  # the trip started on the 14th
+    start, end = year_from(today)
+    events = expand_events([BIG_TRIP], start, end, UTC)
+
+    assert countdowns(events, today, today, min_span=3) == []
+
+
+def test_countdowns_keep_only_the_nearest_occurrence_of_a_series():
+    today = date(2026, 5, 1)
+    start, end = year_from(today)
+    events = expand_events([MONTHLY_RETREAT], start, end, UTC)
+    # The window is full of occurrences; only the nearest earns a countdown.
+    assert len([e for e in events if e.summary == "Retreat"]) > 1
+
+    (item,) = countdowns(events, today, today, min_span=3)
+    assert item.event.start_date == date(2026, 6, 1)
+
+
+def test_countdowns_do_not_deduplicate_events_without_a_uid():
+    today = date(2026, 8, 1)
+    start, end = year_from(today)
+    # A UID is defaulted to "" when absent, which is a fallback, not an identity.
+    documents = [
+        BIG_TRIP.replace("UID:big-trip\n", ""),
+        BIG_TRIP.replace("UID:big-trip\n", "").replace("20270214", "20270314").replace(
+            "20270221", "20270321"
+        ),
+    ]
+    events = expand_events(documents, start, end, UTC)
+    assert len(countdowns(events, today, today, min_span=3)) == 2
+
+
+def test_countdowns_are_capped_and_ordered_by_start():
+    today = date(2026, 8, 1)
+    start, end = year_from(today)
+    documents = [
+        BIG_TRIP.replace("big-trip", f"trip-{month}")
+        .replace("20270214", f"20270{month}14")
+        .replace("20270221", f"20270{month}21")
+        for month in (5, 3, 4)
+    ]
+    events = expand_events(documents, start, end, UTC)
+
+    items = countdowns(events, today, today, min_span=3, limit=2)
+    assert [i.event.start_date for i in items] == [date(2027, 3, 14), date(2027, 4, 14)]
+
+
+def test_days_away_is_a_whole_day_count_across_a_dst_change():
+    tz = ZoneInfo("America/Los_Angeles")
+    today = date(2026, 3, 1)  # US clocks go forward on 8 March 2026
+    start = datetime.combine(today, time.min, tzinfo=tz)
+    trip = BIG_TRIP.replace("20270214", "20260320").replace("20270221", "20260327")
+    events = expand_events([trip], start, start + timedelta(days=365), tz)
+
+    (item,) = countdowns(events, today, today, min_span=3)
+    # 19 calendar days, not 18-and-23-hours rounded down.
+    assert item.days_away == 19
+
+
+def test_countdown_label_reads_naturally():
+    today = date(2027, 2, 13)
+    start, end = year_from(today)
+    events = expand_events([BIG_TRIP], start, end, UTC)
+    (tomorrow,) = countdowns(events, today, today, min_span=3)
+    assert tomorrow.label == "tomorrow"
+
+    (later,) = countdowns(events, date(2027, 2, 10), date(2027, 2, 10), min_span=3)
+    assert later.label == "in 4 days"
 
 
 def test_parse_calendar_data_extracts_documents():
