@@ -314,8 +314,11 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
 
 ## Operational notes
 
-- **Back up** the `radicale-data` volume (the calendar itself) and the `proxy-data` volume
-  (the app password database).
+- **Back up** two bind-mounted directories, both alongside `docker-compose.yml`:
+  `./radicale-data` (the calendar itself) and `./proxy-data` (the app password database).
+  They are ordinary directories on the host, so any file-level backup covers them — there
+  is no `docker volume` to export. Stop the stack first, or accept that SQLite's WAL means
+  a live copy may need recovery on restore.
 - Failed Basic-auth attempts are rate limited per IP and username
   (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW`).
 - The web viewer asks Radicale only for the month window on screen, and caches the result
