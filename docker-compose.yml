@@ -1,17 +1,47 @@
 services:
   radicale:
-    build: ./radicale
+    # Pin a specific version so an upstream change can never surprise a running
+    # deployment. Tags are <radicale-version>.<image-build>, e.g. 3.7.6.0 - the
+    # trailing component is required. See
+    # https://hub.docker.com/r/tomsquest/docker-radicale/tags before bumping.
+    image: tomsquest/docker-radicale:3.7.6.0
     restart: unless-stopped
     networks: [internal]
+    environment:
+      # The image patches its config from these on every start, so this compose
+      # file is the whole configuration - there is no file to mount or maintain.
+      #
+      # http_x_remote_user makes Radicale trust the X-Remote-User header that
+      # calendar-proxy sets after verifying an app password. That is only safe
+      # because Radicale has no published ports and sits on an internal network,
+      # so nothing else can reach it to forge that header.
+      RADICALE_CONFIG_AUTH_TYPE: http_x_remote_user
+      RADICALE_CONFIG_RIGHTS_TYPE: owner_only
+      RADICALE_CONFIG_WEB_TYPE: none
     volumes:
       - radicale-data:/data
-    # Deliberately no published ports: Radicale trusts X-Remote-User, so only
-    # calendar-proxy on the internal network may reach it.
+      # /config is declared as a volume by the image; naming it keeps compose
+      # from leaving anonymous volumes behind on every recreate.
+      - radicale-config:/config
+    healthcheck:
+      # OPTIONS / answers 200 regardless of authentication, so this proves
+      # Radicale is actually serving rather than merely listening.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "-X", "OPTIONS", "http://localhost:5232/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
 
   calendar-proxy:
     build: .
     restart: unless-stopped
-    depends_on: [radicale]
+    depends_on:
+      radicale:
+        # Wait for Radicale to answer before bootstrapping the shared calendar.
+        # The proxy retries regardless, so this is ordering, not a dependency.
+        condition: service_healthy
     env_file: .env
     environment:
       RADICALE_URL: http://radicale:5232
@@ -22,6 +52,14 @@ services:
     ports:
       # Bind to loopback and let your existing reverse proxy terminate TLS.
       - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   internal:
@@ -30,4 +68,5 @@ networks:
 
 volumes:
   radicale-data:
+  radicale-config:
   proxy-data:

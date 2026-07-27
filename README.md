@@ -24,10 +24,15 @@ and presentation layer in front of it.
                           └────────────────────────────────────────┘
 ```
 
+Storage is the stock [`tomsquest/docker-radicale`](https://github.com/tomsquest/docker-radicale)
+image, configured entirely through `RADICALE_CONFIG_*` environment variables in
+`docker-compose.yml` — there is no Radicale config file to mount or maintain in production.
+
 Radicale runs with `auth type = http_x_remote_user`, meaning it takes the authenticated
 identity from a header the fronting proxy sets. **Radicale must therefore never be
 reachable from outside** — the compose file puts it on an `internal: true` network with no
-published ports, so only calendar-proxy can talk to it.
+published ports, so only calendar-proxy can talk to it. If that header mechanism ever fails
+to apply, Radicale falls back to denying anonymous access rather than allowing it.
 
 Every authenticated user is mapped onto the *same* Radicale principal (`community` by
 default), so everyone reads and writes one shared collection at `/community/shared/`.
@@ -124,8 +129,42 @@ UI, the second is what appears in someone's calendar app next to their other cal
 Set them the same if you want. Changing `SHARED_DISPLAY_NAME` later renames the existing
 collection on the next start, and clients pick the new name up on their next sync.
 
-The shared calendar collection is created automatically on first start. The proxy listens
-on `127.0.0.1:8000`; point your existing reverse proxy at it and terminate TLS there.
+The shared calendar collection is created automatically on first start; the proxy waits for
+Radicale's healthcheck and retries the bootstrap, so ordering takes care of itself. The
+proxy listens on `127.0.0.1:8000`; point your existing reverse proxy at it and terminate
+TLS there.
+
+Re-run `docker compose up -d --build` after pulling changes — without `--build`, compose
+reuses the existing proxy image and your changes won't take effect.
+
+### About the Radicale image
+
+`docker-compose.yml` pins `tomsquest/docker-radicale` by version. Tags are
+`<radicale-version>.<image-build>`, so the trailing component is required — `3.7.6.0`, not
+`3.7.6`. Check [the tag list](https://hub.docker.com/r/tomsquest/docker-radicale/tags)
+before bumping.
+
+Only three settings differ from the image's defaults, and they are set as environment
+variables in the compose file:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `RADICALE_CONFIG_AUTH_TYPE` | `http_x_remote_user` | Trust the identity calendar-proxy asserts |
+| `RADICALE_CONFIG_RIGHTS_TYPE` | `owner_only` | Everything lives under one principal |
+| `RADICALE_CONFIG_WEB_TYPE` | `none` | This app provides the web UI |
+
+The image already defaults to `0.0.0.0:5232` and `/data/collections`, and its entrypoint
+chowns `/data` on start, so both named volumes and bind mounts work without any manual
+`chown`.
+
+Two consequences of the env-var approach worth knowing:
+
+- It needs `/config` to be writable, so don't add `read_only: true` to that service. The
+  entrypoint detects a read-only root filesystem and silently skips applying the variables,
+  which would leave Radicale on its default `auth type = none`. If you want a read-only
+  container, mount a config file instead — `dev/radicale.conf` has the same settings.
+- The config is rewritten from the environment on every start, so the compose file always
+  wins over whatever is in the `radicale-config` volume.
 
 Caddy:
 
@@ -179,7 +218,7 @@ The Radicale integration tests are skipped unless you point them at a running in
 .venv/bin/pip install "radicale>=3.3,<4"
 mkdir -p /tmp/radicale-test
 sed 's|/data/collections|/tmp/radicale-test|; s|0.0.0.0:5232|127.0.0.1:5232|' \
-    radicale/config > /tmp/radicale-test.conf
+    dev/radicale.conf > /tmp/radicale-test.conf
 .venv/bin/radicale --config /tmp/radicale-test.conf &
 
 RADICALE_TEST_URL=http://127.0.0.1:5232 .venv/bin/python -m pytest
@@ -196,8 +235,7 @@ RADICALE_TEST_URL=http://127.0.0.1:5232 .venv/bin/python -m pytest
 | `app/caldav.py` | Server-side CalDAV client (bootstrap + viewer fetches) |
 | `app/viewer.py` | Recurrence expansion and month-grid construction |
 | `app/web.py` | Web routes and templates glue |
-| `radicale/` | Radicale image and configuration |
-| `dev/` | Mock identity provider and local run script (never deployed) |
+| `dev/` | Mock identity provider, local Radicale config and run script (never deployed) |
 
 ## Operational notes
 

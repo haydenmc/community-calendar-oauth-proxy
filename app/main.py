@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import create_auth_router, create_oauth
-from .caldav import ensure_collection
+from .caldav import ensure_collection_with_retry
 from .config import Settings, get_settings
 from .dav_proxy import create_dav_router
 from .db import Database
@@ -65,10 +65,7 @@ def create_app(
         )
         app.state.auth_limiter = RateLimiter(settings.auth_rate_limit, settings.auth_rate_window)
         if bootstrap:
-            try:
-                await ensure_collection(app.state.backend, settings)
-            except httpx.HTTPError as exc:
-                log.error("could not reach calendar backend during startup: %s", exc)
+            await ensure_collection_with_retry(app.state.backend, settings)
         try:
             yield
         finally:

@@ -6,11 +6,17 @@ import logging
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
+import anyio
 import httpx
 
 from .config import Settings
 
 log = logging.getLogger(__name__)
+
+# The calendar backend may still be starting when we are. Compose orders startup
+# with a healthcheck, but nothing guarantees that elsewhere, so retry.
+BOOTSTRAP_ATTEMPTS = 15
+BOOTSTRAP_DELAY_SECONDS = 2.0
 
 DAV_NS = "DAV:"
 CALDAV_NS = "urn:ietf:params:xml:ns:caldav"
@@ -116,6 +122,33 @@ async def ensure_collection(client: httpx.AsyncClient, settings: Settings) -> No
             created.status_code,
             created.text[:200],
         )
+
+
+async def ensure_collection_with_retry(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    attempts: int = BOOTSTRAP_ATTEMPTS,
+    delay: float = BOOTSTRAP_DELAY_SECONDS,
+) -> bool:
+    """Bootstrap the collection, waiting for the backend to come up."""
+    for attempt in range(1, attempts + 1):
+        try:
+            await ensure_collection(client, settings)
+        except httpx.HTTPError as exc:
+            if attempt == attempts:
+                log.error("calendar backend unreachable after %s attempts: %s", attempts, exc)
+                return False
+            log.warning(
+                "calendar backend not ready (attempt %s/%s), retrying in %ss: %s",
+                attempt,
+                attempts,
+                delay,
+                exc,
+            )
+            await anyio.sleep(delay)
+        else:
+            return True
+    return False
 
 
 def parse_calendar_data(xml_body: bytes) -> list[str]:

@@ -29,7 +29,7 @@ fi
 
 mkdir -p "$WORK/collections"
 sed "s|/data/collections|$PWD/$WORK/collections|; s|0.0.0.0:5232|127.0.0.1:$RADICALE_PORT|" \
-  radicale/config > "$WORK/radicale.conf"
+  dev/radicale.conf > "$WORK/radicale.conf"
 
 pids=()
 cleanup() {

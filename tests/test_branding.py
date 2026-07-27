@@ -6,7 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.caldav import ensure_collection, parse_display_name
+from app.caldav import ensure_collection, ensure_collection_with_retry, parse_display_name
 from app.config import Settings
 from app.main import create_app
 
@@ -169,3 +169,35 @@ async def test_display_name_with_xml_characters_is_escaped(tmp_path):
 def test_parse_display_name():
     assert parse_display_name(existing_collection_named("Old Name")) == "Old Name"
     assert parse_display_name(b"<not xml") is None
+
+
+# -- bootstrap resilience -----------------------------------------------------
+
+
+async def test_bootstrap_retries_until_the_backend_comes_up(tmp_path):
+    """Radicale may still be starting; the proxy must not give up on the first try."""
+    settings = make_settings(tmp_path)
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(207, content=existing_collection_named(settings.shared_display_name))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        assert await ensure_collection_with_retry(client, settings, attempts=5, delay=0)
+    assert calls["n"] == 3
+
+
+async def test_bootstrap_gives_up_after_the_last_attempt(tmp_path):
+    settings = make_settings(tmp_path)
+    calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        raise httpx.ConnectError("connection refused")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        assert not await ensure_collection_with_retry(client, settings, attempts=4, delay=0)
+    assert calls["n"] == 4
