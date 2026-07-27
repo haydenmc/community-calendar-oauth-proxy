@@ -113,9 +113,16 @@ docker compose up -d --build
 | `SESSION_SECRET` | Signs the session cookie |
 | `COOKIE_SECURE` | Leave `true` in production; `false` only for plain-HTTP local testing |
 | `DISPLAY_TIMEZONE` | IANA zone the web viewer renders times in |
-| `SHARED_DISPLAY_NAME` | Calendar name clients will show |
+| `SITE_TITLE` | Name in the header, browser tab and sign-in page |
+| `SITE_TAGLINE` | Blurb under the sign-in heading; empty to omit |
+| `SHARED_DISPLAY_NAME` | Calendar name CalDAV clients will show |
 
 plus the OIDC settings above.
+
+`SITE_TITLE` and `SHARED_DISPLAY_NAME` are deliberately separate: the first brands the web
+UI, the second is what appears in someone's calendar app next to their other calendars.
+Set them the same if you want. Changing `SHARED_DISPLAY_NAME` later renames the existing
+collection on the next start, and clients pick the new name up on their next sync.
 
 The shared calendar collection is created automatically on first start. The proxy listens
 on `127.0.0.1:8000`; point your existing reverse proxy at it and terminate TLS there.

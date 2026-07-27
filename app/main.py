@@ -76,7 +76,7 @@ def create_app(
             if backend is None:
                 await app.state.backend.aclose()
 
-    app = FastAPI(title="Community Calendar", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title=settings.site_title, lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.settings = settings
 
     app.add_middleware(

@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Community Calendar{% endblock %}</title>
+  <title>{% block title %}{{ settings.site_title }}{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="{{ '/calendar' if user else '/' }}">Community Calendar</a>
+    <a class="brand" href="{{ '/calendar' if user else '/' }}">{{ settings.site_title }}</a>
     {% if user %}
     <nav>
       <a href="/calendar">Calendar</a>

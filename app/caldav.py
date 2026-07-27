@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape
 
 import httpx
 
@@ -43,7 +44,13 @@ MKCALENDAR_BODY = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 PROPFIND_EXISTS = """<?xml version="1.0" encoding="utf-8"?>
-<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/></D:prop></D:propfind>
+<D:propfind xmlns:D="DAV:"><D:prop><D:resourcetype/><D:displayname/></D:prop></D:propfind>
+"""
+
+PROPPATCH_DISPLAYNAME = """<?xml version="1.0" encoding="utf-8"?>
+<D:propertyupdate xmlns:D="DAV:">
+  <D:set><D:prop><D:displayname>{display_name}</D:displayname></D:prop></D:set>
+</D:propertyupdate>
 """
 
 
@@ -53,19 +60,46 @@ def _admin_headers(settings: Settings, **extra: str) -> dict[str, str]:
     return headers
 
 
+def parse_display_name(xml_body: bytes) -> str | None:
+    try:
+        root = ElementTree.fromstring(xml_body)
+    except ElementTree.ParseError:
+        return None
+    for el in root.iter(f"{{{DAV_NS}}}displayname"):
+        return el.text or ""
+    return None
+
+
 async def ensure_collection(client: httpx.AsyncClient, settings: Settings) -> None:
-    """Create the shared calendar collection on first run."""
+    """Create the shared calendar collection, or rename it if the title changed."""
     url = settings.radicale_url.rstrip("/") + settings.shared_path
     probe = await client.request(
         "PROPFIND", url, headers=_admin_headers(settings, Depth="0"), content=PROPFIND_EXISTS
     )
     if probe.status_code in (207, 200):
-        log.info("shared calendar already present at %s", settings.shared_path)
+        current = parse_display_name(probe.content)
+        if current is not None and current != settings.shared_display_name:
+            # SHARED_DISPLAY_NAME is only applied at creation otherwise, so a
+            # later change would silently do nothing.
+            renamed = await client.request(
+                "PROPPATCH",
+                url,
+                headers=_admin_headers(settings),
+                content=PROPPATCH_DISPLAYNAME.format(
+                    display_name=escape(settings.shared_display_name)
+                ),
+            )
+            if renamed.status_code in (207, 200):
+                log.info("renamed shared calendar to %r", settings.shared_display_name)
+            else:
+                log.warning("could not rename shared calendar: %s", renamed.status_code)
+        else:
+            log.info("shared calendar already present at %s", settings.shared_path)
         return
     if probe.status_code not in (403, 404, 409):
         log.warning("unexpected status %s probing shared calendar", probe.status_code)
 
-    body = MKCALENDAR_BODY.format(display_name=settings.shared_display_name)
+    body = MKCALENDAR_BODY.format(display_name=escape(settings.shared_display_name))
     created = await client.request("MKCALENDAR", url, headers=_admin_headers(settings), content=body)
     if created.status_code == 409:
         # Parent principal collection missing - create it, then retry.

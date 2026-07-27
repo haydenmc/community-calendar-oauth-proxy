@@ -1,9 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="card centered">
-  <h1>Community Calendar</h1>
-  <p class="muted">A shared calendar for the community, readable in your browser and
-  subscribable from any CalDAV client.</p>
+  <h1>{{ settings.site_title }}</h1>
+  {% if settings.site_tagline %}<p class="muted">{{ settings.site_tagline }}</p>{% endif %}
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <p><a class="button primary" href="/login">Sign in with {{ settings.oidc_provider_name }}</a></p>
 </section>

@@ -13,6 +13,16 @@ class Settings(BaseSettings):
     # Public origin this app is served from, used to build CalDAV URLs shown to users.
     public_base_url: str = "http://localhost:8000"
 
+    # Name shown in the header, page titles and on the sign-in page. This is the
+    # branding for the site itself; `shared_display_name` below is the separate
+    # name CalDAV clients show for the calendar collection.
+    site_title: str = "Community Calendar"
+    # Tagline under the heading on the sign-in page. Set empty to omit it.
+    site_tagline: str = (
+        "A shared calendar for the community, readable in your browser and "
+        "subscribable from any CalDAV client."
+    )
+
     # --- OpenID Connect ------------------------------------------------------
     # Any provider publishing a discovery document works. The issuer is the URL
     # that serves /.well-known/openid-configuration, e.g. for kanidm
