@@ -27,6 +27,12 @@ log = logging.getLogger(__name__)
 
 REQUIRED_SETTINGS = ("oidc_issuer", "oidc_client_id", "oidc_client_secret", "session_secret")
 
+# The placeholder shipped in .env.example, in the spellings someone might retype.
+PLACEHOLDER_SECRETS = frozenset({"change-me", "changeme", "change_me"})
+MIN_SESSION_SECRET_LENGTH = 32
+
+GENERATE_HINT = "generate one with: python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+
 
 def configure_logging() -> None:
     logging.basicConfig(
@@ -40,6 +46,24 @@ def check_settings(settings: Settings) -> None:
     if missing:
         raise RuntimeError(
             "missing required configuration: " + ", ".join(sorted(missing))
+        )
+
+    # Session cookies are signed, not encrypted: anyone who knows the secret can
+    # mint a session for any username and take the calendar over. Copying
+    # .env.example and missing this one line is the likeliest way that happens,
+    # so refuse to start rather than serve forgeable sessions.
+    secret = settings.session_secret.strip()
+    if secret.lower() in PLACEHOLDER_SECRETS:
+        raise RuntimeError(f"SESSION_SECRET is still the .env.example placeholder - {GENERATE_HINT}")
+    if len(secret) < MIN_SESSION_SECRET_LENGTH:
+        raise RuntimeError(
+            f"SESSION_SECRET must be at least {MIN_SESSION_SECRET_LENGTH} characters, "
+            f"got {len(secret)} - {GENERATE_HINT}"
+        )
+    if settings.oidc_client_secret.strip().lower() in PLACEHOLDER_SECRETS:
+        raise RuntimeError(
+            "OIDC_CLIENT_SECRET is still the .env.example placeholder - set the client "
+            "secret issued by your identity provider"
         )
 
 

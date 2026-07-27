@@ -13,7 +13,8 @@ from app.db import Database
 from app.main import create_app
 from app.passwords import PasswordStore
 
-SESSION_SECRET = "test-session-secret"
+# Long enough to satisfy the production check in app.main.check_settings.
+SESSION_SECRET = "test-session-secret-long-enough-for-the-length-check"
 
 
 @pytest.fixture
