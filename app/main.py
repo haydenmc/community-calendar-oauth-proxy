@@ -19,6 +19,7 @@ from .config import Settings, get_settings
 from .dav_proxy import create_dav_router
 from .db import Database
 from .passwords import PasswordStore, RateLimiter
+from .viewer import ExpansionCache
 from .web import create_web_router
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,6 +91,7 @@ def create_app(
         )
         app.state.auth_limiter = RateLimiter(settings.auth_rate_limit, settings.auth_rate_window)
         app.state.calendar_cache = CalendarCache(max_windows=settings.calendar_cache_windows)
+        app.state.expansion_cache = ExpansionCache()
         if bootstrap:
             await ensure_collection_with_retry(app.state.backend, settings)
         try:

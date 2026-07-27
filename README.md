@@ -118,6 +118,9 @@ docker compose up -d
 | `SESSION_SECRET` | Signs the session cookie |
 | `COOKIE_SECURE` | Leave `true` in production; `false` only for plain-HTTP local testing |
 | `DISPLAY_TIMEZONE` | IANA zone the web viewer renders times in |
+| `COUNTDOWN_DAYS` | How far ahead the countdown panel looks (365); `0` hides it |
+| `COUNTDOWN_MIN_SPAN` | Days an event must span to earn a countdown (3) |
+| `COUNTDOWN_LIMIT` | Most countdowns shown at once (5) |
 | `SITE_TITLE` | Name in the header, browser tab and sign-in page |
 | `SITE_TAGLINE` | Blurb under the sign-in heading; empty to omit |
 | `SHARED_DISPLAY_NAME` | Calendar name CalDAV clients will show |
@@ -325,6 +328,12 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
   against the collection's ctag — so repeat views cost one small request, and a write from
   any CalDAV client invalidates it immediately. `CALENDAR_CACHE_WINDOWS` (24) bounds how
   many months are held; the cache is per process and empty after a restart.
+- On the current month the viewer also fetches a second window — the year after the grid
+  ends — to count down to big multi-day events that are still too far out to be on screen.
+  Per RFC 4791 a recurring event's whole document comes back for any window, so the year
+  window is roughly the month window plus the year's one-off events, not twelve times it.
+  Both windows share one ctag check, and the expansion is memoised against that ctag.
+  `COUNTDOWN_DAYS=0` turns the panel and its query off.
 - CalDAV request bodies over `MAX_BODY_BYTES` (20 MB by default) are refused with 413.
   Bodies are buffered in memory before being forwarded, so this bounds what one client can
   make the process allocate. Raise it if your users attach large files to events.

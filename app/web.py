@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import viewer
 from .auth import csrf_token, current_user, require_user, verify_csrf
-from .caldav import fetch_calendar_documents_cached
+from .caldav import fetch_ctag, fetch_window
 from .config import Settings
 from .passwords import PasswordLimitReached
 
@@ -50,6 +50,27 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         }
         return render(request, "login.html", error=errors.get(request.query_params.get("error", "")))
 
+    async def _expand_horizon(
+        backend,
+        calendar_cache,
+        expansion_cache: viewer.ExpansionCache,
+        ctag: str | None,
+        start: datetime,
+        end: datetime,
+    ) -> list[viewer.Event]:
+        """Events across the countdown horizon, expanded at most once per ctag."""
+        key = None if ctag is None else (ctag, start.isoformat(), end.isoformat())
+        cached = expansion_cache.get(key)
+        if cached is not None:
+            return cached
+        documents = await fetch_window(backend, settings, calendar_cache, ctag, start, end)
+        events = viewer.expand_events(documents, start, end, tz)
+        if documents:
+            # A failed fetch yields no documents and must not be memoised, or
+            # the horizon would look empty until the collection next changed.
+            expansion_cache.put(key, events)
+        return events
+
     @router.get("/calendar", include_in_schema=False)
     async def calendar_view(request: Request):
         if current_user(request) is None:
@@ -68,14 +89,35 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         window_start = datetime.combine(weeks[0][0], time.min, tzinfo=tz)
         window_end = datetime.combine(weeks[-1][-1] + timedelta(days=1), time.min, tzinfo=tz)
 
-        documents = await fetch_calendar_documents_cached(
-            request.app.state.backend,
-            settings,
-            request.app.state.calendar_cache,
-            window_start,
-            window_end,
+        backend = request.app.state.backend
+        calendar_cache = request.app.state.calendar_cache
+        # One ctag read covers both windows below.
+        ctag = await fetch_ctag(backend, settings)
+
+        documents = await fetch_window(
+            backend, settings, calendar_cache, ctag, window_start, window_end
         )
         events = viewer.expand_events(documents, window_start, window_end, tz)
+
+        # Countdowns are relative to today, so they only make sense on the
+        # month the user is actually living in.
+        countdowns: list[viewer.Countdown] = []
+        if settings.countdown_days > 0 and (year, month) == (now.year, now.month):
+            # The horizon starts where the grid ends, so the two windows do not
+            # overlap and the key stays put for the whole month - anchoring on
+            # `now` would mint a new key daily and churn the cache with
+            # year-wide fetches.
+            horizon_end = window_end + timedelta(days=settings.countdown_days)
+            horizon = await _expand_horizon(
+                backend, calendar_cache, request.app.state.expansion_cache, ctag, window_end, horizon_end
+            )
+            countdowns = viewer.countdowns(
+                horizon,
+                now.date(),
+                weeks[-1][-1],
+                min_span=settings.countdown_min_span,
+                limit=settings.countdown_limit,
+            )
 
         prev_year, prev_month = viewer.shift_month(year, month, -1)
         next_year, next_month = viewer.shift_month(year, month, 1)
@@ -90,6 +132,7 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
             weeks=weeks,
             events_by_date=viewer.group_by_date(events),
             upcoming=viewer.upcoming(events, now),
+            countdowns=countdowns,
             today=now.date(),
             prev_link=f"/calendar?year={prev_year}&month={prev_month}",
             next_link=f"/calendar?year={next_year}&month={next_month}",

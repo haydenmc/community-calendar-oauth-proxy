@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.caldav import CalendarCache, parse_ctag
 from app.main import create_app
+from app.viewer import shift_month
 
 from .conftest import login
 from .test_web import MULTISTATUS
@@ -65,6 +69,19 @@ def test_windows_are_bounded():
     assert cache.get("ctag-1", ("20260601T000000Z", "end")) == ["doc6"]
 
 
+def test_reading_a_window_protects_it_from_eviction():
+    cache = CalendarCache(max_windows=3)
+    cache.put("ctag-1", WINDOW, ["horizon"])
+    for month in range(1, 5):
+        # The horizon window is written once but read on every current-month
+        # view, so recency must count for something.
+        assert cache.get("ctag-1", WINDOW) == ["horizon"]
+        cache.put("ctag-1", (f"2026{month:02d}01T000000Z", "end"), [f"doc{month}"])
+
+    assert cache.get("ctag-1", WINDOW) == ["horizon"]
+    assert cache.get("ctag-1", ("20260101T000000Z", "end")) is None  # evicted instead
+
+
 def test_parse_ctag_handles_missing_and_malformed_bodies():
     assert parse_ctag(ctag_body("abc123")) == "abc123"
     assert parse_ctag(b"<multistatus/>") is None
@@ -75,16 +92,18 @@ def test_parse_ctag_handles_missing_and_malformed_bodies():
 
 
 class CtagBackend:
-    """Radicale stand-in that answers ctag PROPFINDs and counts REPORTs."""
+    """Radicale stand-in that answers ctag PROPFINDs and counts both verbs."""
 
     def __init__(self) -> None:
         self.ctag = "ctag-1"
         self.reports = 0
+        self.propfinds = 0
         self.client = httpx.AsyncClient(transport=httpx.MockTransport(self._handle))
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         request.read()
         if request.method == "PROPFIND":
+            self.propfinds += 1
             return httpx.Response(207, content=ctag_body(self.ctag))
         if request.method == "REPORT":
             self.reports += 1
@@ -127,6 +146,42 @@ def test_each_month_is_fetched_once(ctag_client):
     client.get("/calendar?year=2026&month=4")
     client.get("/calendar?year=2026&month=3")
     assert backend.reports == 2
+
+
+def test_both_windows_share_one_ctag_read_and_are_cached(ctag_client):
+    client, backend = ctag_client
+    login(client)
+    today = datetime.now(ZoneInfo(client.app.state.settings.display_timezone)).date()
+    url = f"/calendar?year={today.year}&month={today.month}"
+
+    client.get(url)
+    # The grid and the countdown horizon, behind a single ctag PROPFIND.
+    assert (backend.reports, backend.propfinds) == (2, 1)
+
+    client.get(url)
+    assert (backend.reports, backend.propfinds) == (2, 2)
+
+
+def test_the_countdown_horizon_survives_paging_through_months(ctag_client):
+    client, backend = ctag_client
+    login(client)
+    today = datetime.now(ZoneInfo(client.app.state.settings.display_timezone)).date()
+    current = f"/calendar?year={today.year}&month={today.month}"
+
+    client.get(current)
+    baseline = backend.reports
+    # More months than the cache holds windows, so eviction definitely runs.
+    for offset in range(1, settings_windows(client) + 2):
+        year, month = shift_month(today.year, today.month, offset)
+        client.get(f"/calendar?year={year}&month={month}")
+        client.get(current)
+
+    # Each month costs one REPORT; the horizon is never refetched.
+    assert backend.reports == baseline + settings_windows(client) + 1
+
+
+def settings_windows(client) -> int:
+    return client.app.state.settings.calendar_cache_windows
 
 
 def test_a_failed_fetch_is_not_cached(settings):
