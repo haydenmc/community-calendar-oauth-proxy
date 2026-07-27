@@ -1,0 +1,33 @@
+services:
+  radicale:
+    build: ./radicale
+    restart: unless-stopped
+    networks: [internal]
+    volumes:
+      - radicale-data:/data
+    # Deliberately no published ports: Radicale trusts X-Remote-User, so only
+    # calendar-proxy on the internal network may reach it.
+
+  calendar-proxy:
+    build: .
+    restart: unless-stopped
+    depends_on: [radicale]
+    env_file: .env
+    environment:
+      RADICALE_URL: http://radicale:5232
+      DATABASE_PATH: /data/calendar-proxy.db
+    networks: [internal, edge]
+    volumes:
+      - proxy-data:/data
+    ports:
+      # Bind to loopback and let your existing reverse proxy terminate TLS.
+      - "127.0.0.1:8000:8000"
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  radicale-data:
+  proxy-data:

@@ -1,0 +1,20 @@
+[server]
+hosts = 0.0.0.0:5232
+
+[auth]
+# The identity is taken from the X-Remote-User header set by calendar-proxy.
+# Radicale must therefore never be reachable from outside the compose network.
+type = http_x_remote_user
+
+[storage]
+filesystem_folder = /data/collections
+
+[rights]
+# Everything lives under the single shared principal, so owner_only is enough.
+type = owner_only
+
+[web]
+type = none
+
+[logging]
+level = info
