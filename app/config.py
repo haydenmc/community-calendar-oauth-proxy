@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     # authenticated client can make the process allocate. Calendar events are
     # kilobytes; the default leaves room for large attachments.
     max_body_bytes: int = 20 * 1024 * 1024
+    # Largest calendar-query response the viewer will buffer, in bytes. The
+    # month window keeps this small in practice; the cap is what stops a huge
+    # collection from being pulled into memory whole.
+    max_calendar_bytes: int = 20 * 1024 * 1024
     display_timezone: str = "UTC"
 
     @property

@@ -68,7 +68,9 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         window_start = datetime.combine(weeks[0][0], time.min, tzinfo=tz)
         window_end = datetime.combine(weeks[-1][-1] + timedelta(days=1), time.min, tzinfo=tz)
 
-        documents = await fetch_calendar_documents(request.app.state.backend, settings)
+        documents = await fetch_calendar_documents(
+            request.app.state.backend, settings, window_start, window_end
+        )
         events = viewer.expand_events(documents, window_start, window_end, tz)
 
         prev_year, prev_month = viewer.shift_month(year, month, -1)

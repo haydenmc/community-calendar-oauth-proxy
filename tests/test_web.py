@@ -53,6 +53,28 @@ def test_calendar_view_renders_events(client, backend):
     assert str(backend.last.url) == "http://radicale.test:5232/community/shared/"
 
 
+def test_calendar_query_is_limited_to_the_displayed_window(client, backend):
+    backend.response = httpx.Response(207, content=MULTISTATUS)
+    login(client)
+    client.get("/calendar?year=2026&month=3")
+
+    body = backend.last.content.decode()
+    # The grid for March 2026 runs Sun 1 Mar through Sat 4 Apr inclusive.
+    assert '<C:time-range start="20260301T000000Z" end="20260405T000000Z"/>' in body
+
+
+def test_oversized_calendar_response_renders_an_empty_month(settings, backend):
+    capped = settings.model_copy(update={"max_calendar_bytes": 128})
+    backend.response = httpx.Response(207, content=b"<multistatus>" + b"x" * 4096)
+    app = create_app(capped, backend=backend.client, bootstrap=False)
+    with TestClient(app) as client:
+        login(client)
+        response = client.get("/calendar?year=2026&month=3")
+        # Degraded rather than fatal: the page still renders, without events.
+        assert response.status_code == 200
+        assert "March 2026" in response.text
+
+
 def test_calendar_view_falls_back_on_bad_month(client, backend):
     backend.response = httpx.Response(207, content=MULTISTATUS)
     login(client)

@@ -38,6 +38,37 @@ END:VCALENDAR
 """
 
 
+# Started long before any window we ask for and never ends: the server must
+# still match it, because RFC 4791 time-range matching expands recurrences.
+LONG_RUNNING_EVENT = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//calendar-proxy//integration//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTAMP:20200101T120000Z
+DTSTART:20200106T170000Z
+DTEND:20200106T173000Z
+RRULE:FREQ=WEEKLY
+SUMMARY:Ancient weekly standup
+END:VEVENT
+END:VCALENDAR
+"""
+
+# Comfortably outside the window under test, so it must be filtered out.
+DISTANT_EVENT = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//calendar-proxy//integration//EN
+BEGIN:VEVENT
+UID:{uid}
+DTSTAMP:20260301T120000Z
+DTSTART:20301105T190000Z
+DTEND:20301105T210000Z
+SUMMARY:Distant one-off
+END:VEVENT
+END:VCALENDAR
+"""
+
+
 @pytest.fixture
 def live_client(tmp_path):
     settings = Settings(
@@ -93,6 +124,30 @@ def test_event_written_over_caldav_appears_in_the_web_view(live_client):
     assert "Integration game night" in page.text
     # The weekly recurrence should be expanded across the month.
     assert page.text.count("Integration game night") >= 3
+
+
+def test_time_range_filter_keeps_recurrences_and_drops_out_of_window_events(live_client):
+    """The window filter must narrow by occurrence, not by DTSTART."""
+    settings = live_client.app.state.settings
+    secret = live_client.app.state.passwords.create("alice", "test")[1]
+
+    for template in (LONG_RUNNING_EVENT, DISTANT_EVENT):
+        uid = f"itest-{uuid.uuid4().hex[:8]}"
+        put = live_client.request(
+            "PUT",
+            f"/dav{settings.shared_path}{uid}.ics",
+            headers={**basic_auth("alice", secret), "Content-Type": "text/calendar"},
+            content=template.format(uid=uid).encode(),
+        )
+        assert put.status_code in (201, 204), put.text
+
+    login(live_client)
+    page = live_client.get("/calendar?year=2026&month=3")
+    assert page.status_code == 200
+    # Recurring since 2020 with no UNTIL, so it still occurs in this month.
+    assert "Ancient weekly standup" in page.text
+    # Single occurrence in 2030: the server should never send it for March 2026.
+    assert "Distant one-off" not in page.text
 
 
 def test_a_second_user_sees_the_same_shared_calendar(live_client):

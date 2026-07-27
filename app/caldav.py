@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
@@ -21,6 +22,11 @@ BOOTSTRAP_DELAY_SECONDS = 2.0
 DAV_NS = "DAV:"
 CALDAV_NS = "urn:ietf:params:xml:ns:caldav"
 
+# The time-range filter is what keeps a page view proportional to the window on
+# screen rather than to the whole calendar. Per RFC 4791 the server matches a
+# recurring event when any of its occurrences falls in the range, so events with
+# an RRULE that started years ago still come back; what it returns is the whole
+# document, RRULE intact, which expand_events then expands client-side.
 CALENDAR_QUERY = """<?xml version="1.0" encoding="utf-8"?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop>
@@ -29,11 +35,20 @@ CALENDAR_QUERY = """<?xml version="1.0" encoding="utf-8"?>
   </D:prop>
   <C:filter>
     <C:comp-filter name="VCALENDAR">
-      <C:comp-filter name="VEVENT"/>
+      <C:comp-filter name="VEVENT">
+        <C:time-range start="{start}" end="{end}"/>
+      </C:comp-filter>
     </C:comp-filter>
   </C:filter>
 </C:calendar-query>
 """
+
+# iCalendar UTC form, e.g. 20260301T000000Z (RFC 5545 4.3.5).
+CALDAV_TIME_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def format_caldav_time(value: datetime) -> str:
+    return value.astimezone(UTC).strftime(CALDAV_TIME_FORMAT)
 
 MKCALENDAR_BODY = """<?xml version="1.0" encoding="utf-8"?>
 <C:mkcalendar xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
@@ -165,13 +180,43 @@ def parse_calendar_data(xml_body: bytes) -> list[str]:
     ]
 
 
-async def fetch_calendar_documents(client: httpx.AsyncClient, settings: Settings) -> list[str]:
-    """Fetch every VEVENT-bearing document in the shared collection."""
+async def _read_limited(response: httpx.Response, limit: int) -> bytes | None:
+    """Buffer a response body, or return None once it runs past ``limit``."""
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
+async def fetch_calendar_documents(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    start: datetime,
+    end: datetime,
+) -> list[str]:
+    """Fetch the documents with VEVENTs overlapping ``start``..``end``."""
     url = settings.radicale_url.rstrip("/") + settings.shared_path
-    response = await client.request(
-        "REPORT", url, headers=_admin_headers(settings, Depth="1"), content=CALENDAR_QUERY
-    )
-    if response.status_code != 207:
-        log.error("calendar-query REPORT failed: %s %s", response.status_code, response.text[:200])
+    query = CALENDAR_QUERY.format(start=format_caldav_time(start), end=format_caldav_time(end))
+    # Streamed so an outsized collection is abandoned rather than buffered: any
+    # authenticated user can PUT arbitrarily many events, and peak memory is a
+    # multiple of the response once it is parsed into a DOM.
+    async with client.stream(
+        "REPORT", url, headers=_admin_headers(settings, Depth="1"), content=query
+    ) as response:
+        if response.status_code != 207:
+            await response.aread()
+            log.error(
+                "calendar-query REPORT failed: %s %s", response.status_code, response.text[:200]
+            )
+            return []
+        content = await _read_limited(response, settings.max_calendar_bytes)
+
+    if content is None:
+        log.error(
+            "calendar-query response exceeded %s bytes; showing an empty calendar",
+            settings.max_calendar_bytes,
+        )
         return []
-    return parse_calendar_data(response.content)
+    return parse_calendar_data(content)
