@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from app.passwords import RateLimiter, parse_basic_auth
+import pytest
+
+from app.db import Database
+from app.passwords import (
+    PasswordLimitReached,
+    PasswordStore,
+    RateLimiter,
+    parse_basic_auth,
+)
 
 
 def test_created_password_verifies(store):
@@ -52,6 +60,21 @@ def test_last_used_is_recorded_on_first_use(store):
     assert store.get("alice", record.id).last_used_at is None
     store.verify("alice", secret)
     assert store.get("alice", record.id).last_used_at is not None
+
+
+def test_creation_stops_at_the_limit(tmp_path):
+    store = PasswordStore(Database(str(tmp_path / "capped.db")), max_passwords=3)
+    for _ in range(3):
+        store.create("alice", "client")
+
+    with pytest.raises(PasswordLimitReached):
+        store.create("alice", "one too many")
+
+    # The cap is per user, and revoking frees a slot again.
+    store.create("bob", "client")
+    store.revoke("alice", store.list_for_user("alice")[0].id)
+    store.create("alice", "replacement")
+    assert len(store.list_for_user("alice")) == 3
 
 
 def test_parse_basic_auth():

@@ -13,10 +13,12 @@ from . import viewer
 from .auth import csrf_token, current_user, require_user, verify_csrf
 from .caldav import fetch_calendar_documents
 from .config import Settings
+from .passwords import PasswordLimitReached
 
 log = logging.getLogger(__name__)
 
 FLASH_SECRET_KEY = "new_secret"
+FLASH_ERROR_KEY = "password_error"
 
 
 def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRouter:
@@ -92,11 +94,15 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
             return RedirectResponse("/", status_code=303)
         user = require_user(request)
         store = request.app.state.passwords
+        passwords = store.list_for_user(user.username)
         return render(
             request,
             "passwords.html",
-            passwords=store.list_for_user(user.username),
+            passwords=passwords,
             new_secret=request.session.pop(FLASH_SECRET_KEY, None),
+            error=request.session.pop(FLASH_ERROR_KEY, None),
+            at_limit=len(passwords) >= store.max_passwords,
+            max_passwords=store.max_passwords,
             caldav_url=settings.caldav_url,
         )
 
@@ -109,7 +115,15 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
         user = require_user(request)
         verify_csrf(request, csrf)
         store = request.app.state.passwords
-        _, secret = store.create(user.username, label or "CalDAV client")
+        try:
+            _, secret = store.create(user.username, label or "CalDAV client")
+        except PasswordLimitReached as exc:
+            request.session[FLASH_ERROR_KEY] = (
+                f"You already have {exc.limit} app passwords, the maximum. "
+                "Revoke one you no longer use before generating another."
+            )
+            log.info("app password limit reached for %s", user.username)
+            return RedirectResponse("/passwords", status_code=303)
         request.session[FLASH_SECRET_KEY] = secret
         log.info("created app password for %s", user.username)
         return RedirectResponse("/passwords", status_code=303)

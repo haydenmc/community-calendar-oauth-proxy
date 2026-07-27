@@ -86,6 +86,7 @@ def create_app(
             app.state.db,
             cache_ttl=settings.auth_cache_ttl,
             last_used_throttle=settings.last_used_throttle,
+            max_passwords=settings.max_app_passwords,
         )
         app.state.auth_limiter = RateLimiter(settings.auth_rate_limit, settings.auth_rate_window)
         if bootstrap:

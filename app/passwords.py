@@ -24,6 +24,14 @@ _hasher = PasswordHasher()
 SECRET_BYTES = 24
 
 
+class PasswordLimitReached(Exception):
+    """Raised when a user already holds the maximum number of app passwords."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"at most {limit} app passwords per user")
+        self.limit = limit
+
+
 @dataclass(frozen=True)
 class AppPassword:
     id: int
@@ -58,10 +66,17 @@ def generate_secret() -> str:
 
 
 class PasswordStore:
-    def __init__(self, db: Database, cache_ttl: int = 300, last_used_throttle: int = 60):
+    def __init__(
+        self,
+        db: Database,
+        cache_ttl: int = 300,
+        last_used_throttle: int = 60,
+        max_passwords: int = 20,
+    ):
         self._db = db
         self._cache_ttl = cache_ttl
         self._last_used_throttle = last_used_throttle
+        self._max_passwords = max_passwords
         # (username, secret) -> (expires_at, password_id)
         self._cache: dict[tuple[str, str], tuple[float, int]] = {}
         # password_id -> monotonic timestamp of the last last_used_at write
@@ -69,10 +84,26 @@ class PasswordStore:
 
     # -- CRUD -----------------------------------------------------------------
 
+    @property
+    def max_passwords(self) -> int:
+        return self._max_passwords
+
     def create(self, username: str, label: str) -> tuple[AppPassword, str]:
-        """Create a password, returning the record and the one-time plaintext."""
+        """Create a password, returning the record and the one-time plaintext.
+
+        Raises ``PasswordLimitReached`` if the user is already at the cap. The
+        count and the insert share one transaction so two concurrent requests
+        cannot both slip past it.
+        """
         secret = generate_secret()
         with self._db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS active FROM app_passwords"
+                " WHERE username = ? AND revoked_at IS NULL",
+                (username,),
+            )
+            if cur.fetchone()["active"] >= self._max_passwords:
+                raise PasswordLimitReached(self._max_passwords)
             cur.execute(
                 "INSERT INTO app_passwords (username, label, secret_hash, created_at)"
                 " VALUES (?, ?, ?, ?)",

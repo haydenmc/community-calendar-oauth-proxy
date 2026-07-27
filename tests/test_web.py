@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 
 import httpx
+from fastapi.testclient import TestClient
+
+from app.main import create_app
 
 from .conftest import login
 
@@ -85,6 +88,25 @@ def test_shown_secret_works_for_caldav_and_is_shown_only_once(client):
 
     assert client.app.state.passwords.verify("alice", secret)
     assert "Your new app password" not in client.get("/passwords").text
+
+
+def test_password_limit_is_reported_in_the_ui(settings, backend):
+    # A small cap keeps the test quick - each creation runs a real argon2 hash.
+    capped = settings.model_copy(update={"max_app_passwords": 2})
+    app = create_app(capped, backend=backend.client, bootstrap=False)
+    with TestClient(app) as client:
+        login(client)
+        for _ in range(2):
+            client.post("/passwords", data={"label": "Client", "csrf": "test-csrf"})
+
+        refused = client.post("/passwords", data={"label": "One more", "csrf": "test-csrf"})
+        assert refused.status_code == 200  # after following the redirect
+        assert "Revoke one you no longer use" in refused.text
+        assert len(client.app.state.passwords.list_for_user("alice")) == 2
+        # The generate form is gone while at the limit, and the error is a flash.
+        reloaded = client.get("/passwords")
+        assert "Generate app password" not in reloaded.text
+        assert "Revoke one you no longer use" not in reloaded.text
 
 
 def test_post_without_csrf_token_is_rejected(client):

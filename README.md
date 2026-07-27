@@ -308,6 +308,9 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
   (the app password database).
 - Failed Basic-auth attempts are rate limited per IP and username
   (`AUTH_RATE_LIMIT` / `AUTH_RATE_WINDOW`).
+- Each user may hold `MAX_APP_PASSWORDS` active credentials (20 by default). The cap is
+  there because verifying a Basic-auth attempt tries each of that user's hashes in turn,
+  so an unbounded list would make every failed attempt proportionally more expensive.
 - Successful verifications are cached for `AUTH_CACHE_TTL` seconds so argon2 isn't re-run
   on every poll; a revocation clears the cache immediately.
 - `GET /healthz` reports whether Radicale is reachable.

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Failed Basic-auth attempts allowed per (IP, username) inside the window.
     auth_rate_limit: int = 10
     auth_rate_window: int = 300
+    # Active app passwords one user may hold. Verification tries each of a
+    # user's active hashes in turn, so this also caps the argon2 work a failed
+    # Basic-auth attempt against that username can cost.
+    max_app_passwords: int = 20
     display_timezone: str = "UTC"
 
     @property
