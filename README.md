@@ -109,7 +109,7 @@ of it.
 cp .env.example .env
 python -c 'import secrets; print(secrets.token_urlsafe(48))'   # SESSION_SECRET
 $EDITOR .env
-docker compose up -d --build
+docker compose up -d
 ```
 
 | Variable | Purpose |
@@ -131,14 +131,13 @@ collection on the next start, and clients pick the new name up on their next syn
 
 The shared calendar collection is created automatically on first start; the proxy waits for
 Radicale's healthcheck and retries the bootstrap, so ordering takes care of itself. The
-proxy listens on `127.0.0.1:8000`; point your existing reverse proxy at it and terminate
-TLS there.
+proxy listens on `127.0.0.1:8000`; put a reverse proxy in front of it and terminate TLS
+there — see [Reverse proxy](#reverse-proxy) below, the `X-Forwarded-For` details matter.
 
-Re-run `docker compose up -d --build` after pulling changes — without `--build`, compose
-reuses the existing proxy image and your changes won't take effect.
-
-To run a published release instead of building locally, swap `build: .` for
-`image: ghcr.io/haydenmc/community-calendar-oauth-proxy:latest` (or pin a version tag).
+The compose file runs the published image pinned by version; check the tags on
+`ghcr.io/haydenmc/community-calendar-oauth-proxy` when upgrading. To build from source
+instead, swap `image:` for `build: .` and use `docker compose up -d --build` — without
+`--build`, compose reuses the existing image and your changes won't take effect.
 
 ### About the Radicale image
 
@@ -169,7 +168,50 @@ Two consequences of the env-var approach worth knowing:
 - The config is rewritten from the environment on every start, so the compose file always
   wins over whatever is in the `radicale-config` volume.
 
-Caddy:
+### Reverse proxy
+
+> **Why `X-Forwarded-For` handling matters here:** failed CalDAV logins are
+> rate limited per client IP, and that IP comes from the `X-Forwarded-For`
+> header. If the header can be forged — because the proxy *appends* to the
+> client-supplied value instead of replacing it, or because the app trusts the
+> header from addresses other than the proxy — anyone can spoof a fresh IP per
+> request and brute-force app passwords without ever being throttled. So two
+> rules: the proxy must overwrite the header, and the app must honour it only
+> from the proxy's address. The image honours it only from
+> `FORWARDED_ALLOW_IPS` (never set this to `*`), and every setup below has the
+> proxy overwrite the header.
+
+**Traefik, or any containerized reverse proxy (recommended).** Attach the
+proxy to the `edge` network and delete the `ports:` mapping from
+`calendar-proxy` — then nothing but the proxy can reach the app at all, and
+`FORWARDED_ALLOW_IPS` (already set to the `edge` subnet in the compose file)
+covers it. If your Traefik lives in another compose project, declare its
+shared network as external on this side and list it alongside `internal`
+instead of `edge`, updating `FORWARDED_ALLOW_IPS` to that network's subnet:
+
+```yaml
+  calendar-proxy:
+    # no ports: - Traefik reaches it over the shared network
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.calendar.rule=Host(`cal.example.org`)
+      - traefik.http.services.calendar.loadbalancer.server.port=8000
+```
+
+Traefik discards client-supplied `X-Forwarded-*` headers by default; keep it
+that way by not setting `forwardedHeaders.trustedIPs` on the entrypoint unless
+you front Traefik with a CDN whose ranges you trust. One honest caveat:
+trusting a network's subnet trusts *every* container on that network, not just
+Traefik. On a busy shared `proxy` network that is usually an acceptable risk
+(a forged header only weakens rate limiting), but a dedicated network for the
+pair removes it entirely.
+
+**Host reverse proxy on loopback.** Keep the compose file's `127.0.0.1:8000`
+binding and point the proxy at it. Those connections reach the container from
+the `edge` network's gateway, which the pinned subnet already covers.
+
+Caddy overwrites `X-Forwarded-For` by default (since 2.5), so the minimal
+config is already correct:
 
 ```
 cal.example.org {
@@ -177,13 +219,15 @@ cal.example.org {
 }
 ```
 
-nginx — make sure WebDAV verbs and request bodies pass through untouched:
+nginx must be told to overwrite it — use `$remote_addr`, **not**
+`$proxy_add_x_forwarded_for`, which appends to whatever the client sent — and
+make sure WebDAV verbs and request bodies pass through untouched:
 
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:8000;
     proxy_set_header Host              $host;
-    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For   $remote_addr;
     proxy_set_header X-Forwarded-Proto $scheme;
     client_max_body_size 20m;
 }

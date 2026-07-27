@@ -1,9 +1,5 @@
 services:
   radicale:
-    # Pin a specific version so an upstream change can never surprise a running
-    # deployment. Tags are <radicale-version>.<image-build>, e.g. 3.7.6.0 - the
-    # trailing component is required. See
-    # https://hub.docker.com/r/tomsquest/docker-radicale/tags before bumping.
     image: tomsquest/docker-radicale:3.7.6.0
     restart: unless-stopped
     networks: [internal]
@@ -19,9 +15,7 @@ services:
       RADICALE_CONFIG_RIGHTS_TYPE: owner_only
       RADICALE_CONFIG_WEB_TYPE: none
     volumes:
-      - radicale-data:/data
-      # /config is declared as a volume by the image; naming it keeps compose
-      # from leaving anonymous volumes behind on every recreate.
+      - ./radicale-data:/data
       - radicale-config:/config
     healthcheck:
       # OPTIONS / answers 200 regardless of authentication, so this proves
@@ -35,24 +29,27 @@ services:
       - no-new-privileges:true
 
   calendar-proxy:
-    build: .
-    # Or use a published release instead of building:
-    #   image: ghcr.io/haydenmc/community-calendar-oauth-proxy:latest
+    image: ghcr.io/haydenmc/community-calendar-oauth-proxy:0.0.1
     restart: unless-stopped
     depends_on:
       radicale:
-        # Wait for Radicale to answer before bootstrapping the shared calendar.
-        # The proxy retries regardless, so this is ordering, not a dependency.
         condition: service_healthy
     env_file: .env
     environment:
       RADICALE_URL: http://radicale:5232
       DATABASE_PATH: /data/calendar-proxy.db
+      # Trust X-Forwarded-* only from the edge network. Connections through the
+      # published loopback port arrive from the network's gateway; a
+      # containerized reverse proxy (Traefik etc.) joins the same range. See
+      # "Reverse proxy" in the README before changing this - never use "*".
+      FORWARDED_ALLOW_IPS: 172.28.0.0/24
     networks: [internal, edge]
     volumes:
-      - proxy-data:/data
+      - ./proxy-data:/data
     ports:
       # Bind to loopback and let your existing reverse proxy terminate TLS.
+      # Running a containerized proxy like Traefik instead? Remove this mapping
+      # and attach the proxy to the edge network - see the README.
       - "127.0.0.1:8000:8000"
     healthcheck:
       # The image declares this too, but podman builds OCI-format images and
@@ -68,9 +65,11 @@ services:
 networks:
   internal:
     internal: true
-  edge: {}
+  edge:
+    # Pinned so FORWARDED_ALLOW_IPS above names a stable, known range.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
-  radicale-data:
   radicale-config:
-  proxy-data:
