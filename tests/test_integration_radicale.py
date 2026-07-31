@@ -213,6 +213,40 @@ def test_ics_feed_serves_the_whole_collection(live_client):
     assert unchanged.status_code == 304
 
 
+def test_event_added_from_the_web_form_reaches_the_calendar_and_the_feed(live_client):
+    """The whole point of the form: no CalDAV client anywhere in this path."""
+    login(live_client)
+    summary = f"Web form event {uuid.uuid4().hex[:8]}"
+    created = live_client.post(
+        "/events",
+        data={
+            "summary": summary,
+            "location": "Village Hall",
+            "description": "Added from the browser",
+            "start": "2026-03-04T19:00",
+            "end": "2026-03-04T20:30",
+            "csrf": "test-csrf",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303, created.text
+    assert created.headers["location"] == "/calendar?year=2026&month=3"
+
+    page = live_client.get("/calendar?year=2026&month=3")
+    assert summary in page.text
+    assert "19:00" in page.text
+
+    live_client.post("/feeds", data={"label": "Google", "csrf": "test-csrf"})
+    feed = live_client.app.state.feeds.list_for_user("alice")[0]
+    live_client.cookies.clear()
+
+    response = live_client.get(f"/feeds/{feed.token}.ics")
+    assert response.status_code == 200, response.text
+    assert summary in response.text
+    # The reason the form builds the document itself: nothing may add a reminder.
+    assert "VALARM" not in response.text
+
+
 def test_a_second_user_sees_the_same_shared_calendar(live_client):
     settings = live_client.app.state.settings
     alice_secret = live_client.app.state.passwords.create("alice", "test")[1]

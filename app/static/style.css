@@ -136,6 +136,40 @@ ul.agenda li:last-child { border-bottom: none; }
   font: inherit;
 }
 
+.stacked-form { display: flex; flex-direction: column; gap: .3rem; margin-top: 1rem; }
+.stacked-form label { color: var(--muted); font-size: .85rem; }
+.stacked-form label + * { margin-bottom: .6rem; }
+.stacked-form input, .stacked-form textarea {
+  width: 100%;
+  padding: .45rem .6rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.stacked-form textarea { resize: vertical; }
+/* Overrides the block layout above so the box sits beside its own text. */
+.stacked-form label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  margin-bottom: .6rem;
+  color: var(--fg);
+  font-size: inherit;
+}
+.stacked-form label.checkbox input { width: auto; margin: 0; }
+.form-actions { display: flex; gap: .5rem; align-items: center; margin-top: .4rem; }
+
+.month-actions { margin: .75rem 0 0; text-align: right; }
+.notice {
+  margin: 0 0 1.25rem;
+  padding: .7rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 pre.secret {
   font-size: 1.05rem;
   padding: .8rem;

@@ -1,12 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ month_title }} — {{ settings.site_title }}{% endblock %}
 {% block content %}
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 <section class="card">
   <div class="month-header">
     <a class="button subtle" href="{{ prev_link }}" aria-label="Previous month">&larr;</a>
     <h1>{{ month_title }}</h1>
     <a class="button subtle" href="{{ next_link }}" aria-label="Next month">&rarr;</a>
   </div>
+  <p class="month-actions"><a class="button primary" href="/events/new">Add event</a></p>
 
   <table class="month">
     <thead>
@@ -50,8 +52,9 @@
   {% else %}
   <p class="muted">Nothing scheduled in this month's view.</p>
   {% endif %}
-  <p class="muted small">Times shown in {{ settings.display_timezone }}. To add or edit events,
-  connect a CalDAV client from <a href="/passwords">CalDAV access</a>.</p>
+  <p class="muted small">Times shown in {{ settings.display_timezone }}. Post a one-off event with
+  <a href="/events/new">Add event</a>; for repeating events, or to change or remove one, connect a
+  CalDAV client from <a href="/passwords">CalDAV access</a>.</p>
 </section>
 
 {% if countdowns %}

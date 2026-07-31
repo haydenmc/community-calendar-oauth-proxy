@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Add an event — {{ settings.site_title }}{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>Add an event</h1>
+  <p class="muted">This adds a single event to the shared calendar, so everyone sees it. Times are
+  in {{ settings.display_timezone }}. For repeating events, or to change one later, use a CalDAV
+  client from <a href="/passwords">CalDAV access</a>.</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/events" class="stacked-form">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+
+    <label for="summary">Title</label>
+    <input id="summary" name="summary" type="text" maxlength="200" required autofocus
+           value="{{ values.summary }}" placeholder="e.g. Village hall AGM">
+
+    <label for="start">Starts</label>
+    <input id="start" name="start" type="datetime-local" required value="{{ values.start }}">
+
+    <label for="end">Ends</label>
+    <input id="end" name="end" type="datetime-local" value="{{ values.end }}">
+
+    <label class="checkbox" for="all_day">
+      <input id="all_day" name="all_day" type="checkbox" value="on"
+             {% if values.all_day %}checked{% endif %}>
+      All day
+    </label>
+
+    <label for="location">Location</label>
+    <input id="location" name="location" type="text" maxlength="200"
+           value="{{ values.location }}" placeholder="Optional">
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" rows="5" maxlength="2000"
+              placeholder="Optional">{{ values.description }}</textarea>
+
+    <div class="form-actions">
+      <button class="button primary" type="submit">Add event</button>
+      <a class="button subtle" href="/calendar">Cancel</a>
+    </div>
+  </form>
+</section>
+
+<script>
+  // Swap the two moment inputs between datetime-local and date so an all-day
+  // event is not asked for a time it does not have. The server accepts either
+  // shape and ignores times when All day is set, so this is only a nicety.
+  (function () {
+    var allDay = document.getElementById('all_day');
+    var moments = [document.getElementById('start'), document.getElementById('end')];
+    // Remembered so unticking restores the time the user had already typed.
+    var times = ['00:00', '00:00'];
+
+    function apply() {
+      moments.forEach(function (input, index) {
+        var value = input.value;
+        if (allDay.checked) {
+          if (value.indexOf('T') !== -1) {
+            times[index] = value.slice(value.indexOf('T') + 1, value.indexOf('T') + 6);
+            value = value.slice(0, value.indexOf('T'));
+          }
+          input.type = 'date';
+        } else {
+          if (value && value.indexOf('T') === -1) {
+            value = value + 'T' + times[index];
+          }
+          input.type = 'datetime-local';
+        }
+        input.value = value;
+      });
+    }
+
+    allDay.addEventListener('change', apply);
+    apply();
+  })();
+</script>
+{% endblock %}

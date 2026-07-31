@@ -10,9 +10,9 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import viewer
+from . import events, viewer
 from .auth import csrf_token, current_user, require_user, verify_csrf
-from .caldav import fetch_collection_ics, fetch_ctag, fetch_window
+from .caldav import fetch_collection_ics, fetch_ctag, fetch_window, put_event
 from .config import Settings
 from .feeds import FeedLimitReached, feed_url
 from .passwords import PasswordLimitReached
@@ -22,6 +22,10 @@ log = logging.getLogger(__name__)
 FLASH_SECRET_KEY = "new_secret"
 FLASH_ERROR_KEY = "password_error"
 FLASH_FEED_ERROR_KEY = "feed_error"
+FLASH_EVENT_KEY = "new_event"
+
+# Value the datetime-local inputs on the event form expect.
+FORM_DATETIME_FORMAT = "%Y-%m-%dT%H:%M"
 
 # Long enough that a subscriber refetching immediately is served from cache, far
 # short of how long a calendar edit may wait to appear. Private so nothing in
@@ -155,7 +159,86 @@ def create_web_router(settings: Settings, templates: Jinja2Templates) -> APIRout
             today=now.date(),
             prev_link=f"/calendar?year={prev_year}&month={prev_month}",
             next_link=f"/calendar?year={next_year}&month={next_month}",
+            notice=request.session.pop(FLASH_EVENT_KEY, None),
         )
+
+    def _render_event_form(request: Request, values: dict[str, str], error: str | None = None):
+        return render(request, "event_form.html", values=values, error=error)
+
+    @router.get("/events/new", include_in_schema=False)
+    async def new_event_form(request: Request):
+        if current_user(request) is None:
+            return RedirectResponse("/", status_code=303)
+        # Default to the next whole hour, which is nearly always closer to what
+        # someone is about to type than "now" with its stray minutes.
+        start = (datetime.now(tz) + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        return _render_event_form(
+            request,
+            {
+                "summary": "",
+                "location": "",
+                "description": "",
+                "start": start.strftime(FORM_DATETIME_FORMAT),
+                "end": (start + timedelta(hours=1)).strftime(FORM_DATETIME_FORMAT),
+                "all_day": "",
+            },
+        )
+
+    @router.post("/events", include_in_schema=False)
+    async def create_event(
+        request: Request,
+        summary: str = Form(default=""),
+        location: str = Form(default=""),
+        description: str = Form(default=""),
+        start: str = Form(default=""),
+        end: str = Form(default=""),
+        all_day: str = Form(default=""),
+        csrf: str = Form(default=""),
+    ):
+        user = require_user(request)
+        verify_csrf(request, csrf)
+        # Echoed back verbatim on any error, so a long description survives a
+        # typo in the date rather than making the user retype it.
+        submitted = {
+            "summary": summary,
+            "location": location,
+            "description": description,
+            "start": start,
+            "end": end,
+            "all_day": all_day,
+        }
+        try:
+            draft = events.parse_event_form(
+                summary=summary,
+                location=location,
+                description=description,
+                start=start,
+                end=end,
+                all_day=bool(all_day),
+                tz=tz,
+            )
+        except events.EventFormError as exc:
+            return _render_event_form(request, submitted, str(exc))
+
+        uid = events.new_uid()
+        body = events.build_event_ics(
+            draft, uid=uid, created_by=user.username, now=datetime.now(tz)
+        )
+        stored = await put_event(
+            request.app.state.backend, settings, events.filename_for(uid), body
+        )
+        if not stored:
+            return _render_event_form(
+                request,
+                submitted,
+                "The calendar could not be updated just now. Please try again.",
+            )
+
+        # uid and username only: the event body is user-supplied text.
+        log.info("created event %s for %s", uid, user.username)
+        request.session[FLASH_EVENT_KEY] = f"Added “{draft.summary}” to the calendar."
+        year, month = events.month_of(draft)
+        return RedirectResponse(f"/calendar?year={year}&month={month}", status_code=303)
 
     @router.get("/passwords", include_in_schema=False)
     async def passwords_page(request: Request):
