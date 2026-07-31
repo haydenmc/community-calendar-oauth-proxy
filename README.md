@@ -4,6 +4,8 @@ A shared community calendar that authenticates against your existing OpenID Conn
 identity provider.
 
 - **Web viewer** — sign in with SSO, see the month at a glance.
+- **Add event** — a form for posting a one-off event (title, location, start/end, description)
+  without needing a CalDAV client at all.
 - **CalDAV** — works with Thunderbird, DAVx⁵, Apple Calendar, and anything else that speaks CalDAV.
 - **App passwords** — because CalDAV clients can't do an OAuth handshake, users generate
   HTTP Basic credentials in the web UI and paste those into their client.
@@ -20,6 +22,7 @@ and presentation layer in front of it.
  Browser ── OIDC ───────► │  calendar-proxy (FastAPI)              │
  (viewer, credentials)    │  • OIDC login against your IdP         │
                           │  • month view + upcoming agenda        │
+                          │  • add-event form → PUT to Radicale    │
                           │  • app password CRUD (argon2, SQLite)  │
  CalDAV client ─ Basic ─► │  • /dav/* → verify Basic auth, forward │ ──► Radicale
  (Thunderbird, DAVx⁵…)    │    WebDAV with X-Remote-User           │     (internal only)
@@ -293,7 +296,15 @@ These feeds are read-only, and how often they refresh is entirely the subscribin
 decision: commonly a few hours, sometimes as much as a day. Nothing here can shorten that.
 Use CalDAV where changes need to show up promptly.
 
-The web viewer is read-only; create and edit events from a CalDAV client.
+## Adding an event from the browser
+
+**Add event** in the nav posts a single occurrence to the shared calendar: title, location,
+start and end (or a whole day), and a description. Times are entered and shown in
+`DISPLAY_TIMEZONE`, and stored as UTC.
+
+Events created this way carry **no reminder** — they are posted for everyone, and none of
+them should make somebody else's phone go off. Repeating events, and changing or deleting
+anything already on the calendar, still want a CalDAV client.
 
 ## Development
 
@@ -343,6 +354,7 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
 | `app/dav_proxy.py` | The `/dav/*` CalDAV reverse proxy |
 | `app/caldav.py` | Server-side CalDAV client (bootstrap, viewer fetches, feed bodies) |
 | `app/viewer.py` | Recurrence expansion and month-grid construction |
+| `app/events.py` | Validating the add-event form and building its VEVENT |
 | `app/web.py` | Web routes and templates glue |
 | `dev/` | Mock identity provider, local Radicale config and run script (never deployed) |
 
@@ -392,5 +404,7 @@ Releases are tagged `v<major>.<minor>.<patch>`; the registry gets that version p
 
 - Per-user calendars alongside the shared one: pass the real username in `X-Remote-User`
   and add a Radicale rights file granting everyone read/write on the shared collection.
-- An "add event" form in the web viewer — the proxy can `PUT` to Radicale itself.
+- Editing and deleting events from the web UI: the add-event form only creates, so anything
+  already on the calendar still needs a CalDAV client to change.
+- Recurring events in the add-event form, which today deliberately handles single occurrences only.
 - Group gating, if the community ever wants the calendar limited to a subset of accounts.

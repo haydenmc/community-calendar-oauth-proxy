@@ -356,6 +356,37 @@ async def fetch_collection_ics(client: httpx.AsyncClient, settings: Settings) ->
     return content
 
 
+async def put_event(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    filename: str,
+    body: bytes,
+) -> bool:
+    """Store a new event document in the shared collection.
+
+    Goes through this admin-headed client rather than the DAV proxy: it writes to
+    the same collection as the same principal every CalDAV client already uses,
+    so it grants nothing the signed-in user did not already have.
+    """
+    url = settings.radicale_url.rstrip("/") + settings.shared_path + filename
+    headers = {
+        "X-Remote-User": settings.shared_principal,
+        "Content-Type": "text/calendar; charset=utf-8",
+        # A UID collision should fail loudly rather than quietly replace whatever
+        # is already filed under that name.
+        "If-None-Match": "*",
+    }
+    try:
+        response = await client.request("PUT", url, headers=headers, content=body)
+    except httpx.HTTPError as exc:
+        log.error("event PUT could not be sent: %s", exc)
+        return False
+    if response.status_code in (200, 201, 204):
+        return True
+    log.error("event PUT failed: %s %s", response.status_code, response.text[:200])
+    return False
+
+
 async def fetch_window(
     client: httpx.AsyncClient,
     settings: Settings,
